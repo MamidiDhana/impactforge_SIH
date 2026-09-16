@@ -1,16 +1,32 @@
 import { useState } from 'react'
-import { CheckCircle2, Copy, Check, ExternalLink, Calendar, Tag, MapPin } from 'lucide-react'
+import {
+  CheckCircle2,
+  Copy,
+  Check,
+  ExternalLink,
+  Calendar,
+  Tag,
+  MapPin,
+  ShieldCheck,
+  X,
+} from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { CitizenProblem } from '../../types'
 import type { ReportProblemFormTranslations } from '../../data/jharkhandData'
+import type { BackendReportResponse } from '../../services/reportService'
 
 interface TrackIdConfirmationModalProps {
   problem: CitizenProblem
+  backendReport?: BackendReportResponse | null
   onClose?: () => void
   translations?: ReportProblemFormTranslations
 }
 
-export function TrackIdConfirmationModal({ problem, onClose, translations }: TrackIdConfirmationModalProps) {
+export function TrackIdConfirmationModal({
+  problem,
+  onClose,
+  translations,
+}: TrackIdConfirmationModalProps) {
   const navigate = useNavigate()
   const [copied, setCopied] = useState(false)
 
@@ -32,11 +48,21 @@ export function TrackIdConfirmationModal({ problem, onClose, translations }: Tra
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/60 p-4 py-8 backdrop-blur-sm animate-in fade-in"
     >
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl animate-in zoom-in-95">
+      <div className="my-auto w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl animate-in zoom-in-95">
         {/* Header decoration */}
-        <div className="bg-gradient-to-r from-emerald-600 via-[#187e8d] to-[#12365a] p-6 text-center text-white">
+        <div className="relative bg-gradient-to-r from-emerald-600 via-[#187e8d] to-[#12365a] p-6 text-center text-white">
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="absolute right-4 top-4 rounded-lg p-1.5 text-white/80 transition hover:bg-white/10 hover:text-white"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+          )}
           <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-white/20 ring-4 ring-white/30 backdrop-blur-md">
             <CheckCircle2 size={32} className="text-white" />
           </div>
@@ -44,12 +70,12 @@ export function TrackIdConfirmationModal({ problem, onClose, translations }: Tra
             {t?.successModalTitle || 'Problem Reported Successfully'}
           </h2>
           <p className="mt-1 text-xs text-emerald-100">
-            {t?.successModalSubtitle || 'Your problem has been reported successfully and registered in the Jharkhand State Innovation System.'}
+            {t?.successModalSubtitle || 'Your problem has been registered and submitted to the Jharkhand State Innovation System.'}
           </p>
         </div>
 
         {/* Body content */}
-        <div className="p-6 space-y-5">
+        <div className="p-5 sm:p-6 space-y-5">
           {/* Generated Track ID Display Card */}
           <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 text-center">
             <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">
@@ -74,6 +100,29 @@ export function TrackIdConfirmationModal({ problem, onClose, translations }: Tra
             </p>
           </div>
 
+          {/* Next Step: Pending Government Verification */}
+          <div className="flex items-start gap-3.5 rounded-xl border border-amber-200 bg-amber-50/80 p-4">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-white shadow-sm mt-0.5">
+              <ShieldCheck size={18} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-800">
+                  Next Step
+                </span>
+                <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-900 ring-1 ring-amber-300">
+                  Awaiting Review
+                </span>
+              </div>
+              <h4 className="mt-0.5 text-sm font-bold text-amber-950">
+                Pending Government Verification
+              </h4>
+              <p className="mt-1 text-xs text-amber-900/80">
+                Your report has been submitted and is currently awaiting verification by authorized district authorities.
+              </p>
+            </div>
+          </div>
+
           {/* Submission Summary Metadata */}
           <div className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4 text-xs text-slate-600 sm:grid-cols-2">
             <div className="sm:col-span-2">
@@ -92,7 +141,7 @@ export function TrackIdConfirmationModal({ problem, onClose, translations }: Tra
               <Tag size={14} className="text-[#187e8d]" />
               <span>
                 {t?.successStatusLabel || 'Status:'}{' '}
-                <strong className="text-emerald-700">{t?.successStatusValue || 'Problem Reported'}</strong>
+                <strong className="text-amber-700">Pending Government Verification</strong>
               </span>
             </div>
             <div className="flex items-center gap-1.5 sm:col-span-2">
@@ -108,24 +157,14 @@ export function TrackIdConfirmationModal({ problem, onClose, translations }: Tra
           </div>
 
           {/* Action Buttons */}
-          <div className="flex flex-col gap-2.5 pt-1 sm:flex-row sm:justify-end">
+          <div className="flex justify-end pt-1">
             <button
               type="button"
               onClick={handleTrackProblem}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#12365a] px-5 py-2.5 text-sm font-bold text-white shadow transition hover:bg-[#1a4a7a] active:scale-95"
+              className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-[#12365a] px-6 py-2.5 text-sm font-bold text-white shadow transition hover:bg-[#1a4a7a] active:scale-95"
             >
               <ExternalLink size={16} />
               <span>{t?.trackProblemButton || 'Track Problem'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (onClose) onClose()
-                navigate('/citizen/problems')
-              }}
-              className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-            >
-              {t?.viewReportsButton || 'View Reports'}
             </button>
           </div>
         </div>
@@ -133,4 +172,5 @@ export function TrackIdConfirmationModal({ problem, onClose, translations }: Tra
     </div>
   )
 }
+
 

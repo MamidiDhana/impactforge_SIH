@@ -156,7 +156,14 @@ export function MyProblemsPage() {
                     </p>
                   </div>
 
-                  <CitizenStatusBadge status={problem.status} />
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    <CitizenStatusBadge status={problem.status} />
+                    {(!problem.verification_status || problem.verification_status === 'Pending Verification') && problem.status === 'Submitted' && (
+                      <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-800 ring-1 ring-inset ring-amber-300 shadow-sm">
+                        Pending Gov Verification
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="mt-5 flex flex-wrap items-center justify-end gap-2.5 border-t border-slate-100 pt-3">

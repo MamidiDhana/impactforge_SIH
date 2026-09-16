@@ -40,8 +40,8 @@ export const JHARKHAND_DISTRICTS: JharkhandDistrict[] = [
 
 export const STAGE_NAMES = [
   'Problem Reported',
-  'Report Reached Government',
-  'Government Review',
+  'AI Pre-Screening',
+  'Government Verification',
   'Government Accepted',
   'Recommended to University/HEI',
   'Faculty Assigned',
@@ -63,8 +63,8 @@ export const DEFAULT_STAGE_CONFIG: {
   defaultDesc: string
 }[] = [
   { name: 'Problem Reported', responsibleRole: 'Citizen', responsibleOrg: 'Citizen Portal', defaultDesc: 'Problem submission received and assigned official Track ID.' },
-  { name: 'Report Reached Government', responsibleRole: 'Government', responsibleOrg: 'Jharkhand State Innovation Directorate', defaultDesc: 'Dispatched to district innovation desk and logged into review queue.' },
-  { name: 'Government Review', responsibleRole: 'Government', responsibleOrg: 'District Validation Team', defaultDesc: 'Under evaluation for governance scope, authenticity, and priority.' },
+  { name: 'AI Pre-Screening', responsibleRole: 'Citizen', responsibleOrg: 'ImpactForge AI Engine', defaultDesc: 'Automated category classification, duplicate check against LIVE problems, and priority assessment completed.' },
+  { name: 'Government Verification', responsibleRole: 'Government', responsibleOrg: 'District Validation Team', defaultDesc: 'Pending Government Verification: Human validator reviews authenticity (Genuine → Validated, Duplicate → Linked/Merged, Fake → Rejected).' },
   { name: 'Government Accepted', responsibleRole: 'Government', responsibleOrg: 'Jharkhand Government', defaultDesc: 'Validated as a priority public interest challenge for solution development.' },
   { name: 'Recommended to University/HEI', responsibleRole: 'HEI/University', responsibleOrg: 'Partner HEI Network (e.g. BIT Mesra, NIT Jamshedpur)', defaultDesc: 'Matched with accredited Higher Education Institutions based on domain capabilities.' },
   { name: 'Faculty Assigned', responsibleRole: 'Faculty', responsibleOrg: 'University Innovation Faculty', defaultDesc: 'Lead faculty investigator appointed to supervise scientific/technical direction.' },

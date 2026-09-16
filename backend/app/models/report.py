@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from sqlalchemy import (
     String,
     Text,
@@ -148,6 +148,47 @@ class Report(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+    @property
+    def ai_pre_screening(self) -> Dict[str, Any]:
+        has_similar = False
+        top_match = None
+        top_score = 0.0
+        matches = self.ai_similarity_matches or []
+        if isinstance(matches, list) and len(matches) > 0:
+            candidate_match = matches[0]
+            if isinstance(candidate_match, dict):
+                top_match = candidate_match
+                top_score = float(candidate_match.get("similarity_score", 0.0))
+                # Threshold >= 0.55 flags possible / strong / duplicate similarity against live problems
+                has_similar = top_score >= 0.55
+
+        # Determine overall pre-screening status
+        if self.ai_analysis_status == "failed" and self.ai_priority_status == "failed":
+            overall_status = "failed"
+        elif self.ai_analysis_status == "needs_review" or has_similar:
+            overall_status = "needs_review"
+        else:
+            overall_status = "completed"
+
+        return {
+            "status": overall_status,
+            "category": self.ai_category or self.category,
+            "subcategory": self.ai_subcategory,
+            "problem_type": self.ai_problem_type,
+            "confidence_score": self.ai_confidence_score,
+            "category_status": self.ai_analysis_status or "pending",
+            "priority": self.ai_priority or self.priority,
+            "priority_score": self.ai_priority_score,
+            "priority_reasons": self.ai_priority_reasons or [],
+            "priority_status": self.ai_priority_status or "pending",
+            "has_similar_live_problem": has_similar,
+            "top_similarity_score": top_score,
+            "top_similar_match": top_match,
+            "similar_matches": matches,
+            "similarity_status": self.ai_similarity_status or "pending",
+            "verification_status": self.verification_status or "Pending Verification",
+        }
 
     def __repr__(self) -> str:
         return f"<Report {self.track_id}: {self.problem_title} ({self.status})>"

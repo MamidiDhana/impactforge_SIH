@@ -1,5 +1,13 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import {
+  Sparkles,
+  AlertTriangle,
+  CheckCircle2,
+  ShieldCheck,
+  MapPin,
+  Calendar,
+} from 'lucide-react'
 import { CitizenStatusBadge } from '../../components/citizen/CitizenStatusBadge'
 import { FilterBar } from '../../components/forms/FilterBar'
 import { PageContainer } from '../../components/common/PageContainer'
@@ -99,6 +107,18 @@ export function GovProblemRow({
   onViewDetails?: () => void
 }) {
   const trackId = problem.trackId || (problem.id.startsWith('IF-JH') ? problem.id : 'IF-JH-2026-0001')
+
+  const aiCategory = problem.ai_category || problem.ai_pre_screening?.category || problem.category
+  const aiConfidence = problem.ai_confidence_score || problem.ai_pre_screening?.confidence_score
+  const hasSimilar = Boolean(
+    problem.ai_pre_screening?.has_similar_live_problem ||
+    (problem.ai_similarity_matches && problem.ai_similarity_matches.length > 0 && problem.ai_similarity_matches[0].similarity_score >= 0.55)
+  )
+  const topMatch = problem.ai_pre_screening?.top_similar_match || problem.ai_similarity_matches?.[0]
+  const topScore = problem.ai_pre_screening?.top_similarity_score ?? topMatch?.similarity_score
+  const priorityScore = problem.ai_priority_score || problem.ai_pre_screening?.priority_score
+  const verificationStatus = problem.verification_status || 'Pending Verification'
+
   return (
     <article
       id={`row-${trackId}`}
@@ -109,9 +129,9 @@ export function GovProblemRow({
       }`}
     >
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="rounded bg-[#12365a] px-2 py-0.5 font-mono text-xs font-bold text-white">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2 mb-1.5">
+            <span className="rounded bg-[#12365a] px-2 py-0.5 font-mono text-xs font-bold text-white tracking-wide">
               {trackId}
             </span>
             {isSelected && (
@@ -119,40 +139,89 @@ export function GovProblemRow({
                 Selected from Duplicates
               </span>
             )}
-            <span className="text-xs text-slate-400">Jharkhand State Operations</span>
+            <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+              <MapPin size={12} className="text-[#187e8d]" />
+              {problem.district ? `${problem.district}, Jharkhand` : problem.location}
+            </span>
+            <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+              <Calendar size={12} />
+              Submitted {problem.submittedAt}
+            </span>
           </div>
+
           <h2 className="font-[Manrope] text-lg font-bold text-[#13243b]">{problem.title}</h2>
-          <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">{problem.description}</p>
-          <p className="mt-3 text-xs text-slate-400">
-            {problem.category} · {problem.district ? `${problem.district}, Jharkhand` : problem.location} · Submitted {problem.submittedAt}
-          </p>
+          <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">{problem.description}</p>
+
+          {/* AI Intelligence & Duplicate-Check Indicators */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {/* AI Category */}
+            <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200">
+              <Sparkles size={12} className="text-indigo-600" />
+              AI Category: {aiCategory}
+              {aiConfidence ? ` (${Math.round(aiConfidence <= 1 ? aiConfidence * 100 : aiConfidence)}% conf)` : ''}
+            </span>
+
+            {/* Duplicate Check Result */}
+            {hasSimilar && topScore ? (
+              <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">
+                <AlertTriangle size={12} className="text-amber-600" />
+                Duplicate Check: {Math.round(topScore <= 1 ? topScore * 100 : topScore)}% match {topMatch?.track_id ? `(${topMatch.track_id})` : ''}
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                <CheckCircle2 size={12} className="text-emerald-600" />
+                Duplicate Check: Unique (No Live Matches)
+              </span>
+            )}
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <span
-            className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-              problem.priority === 'High' || problem.priority === 'Critical'
-                ? 'bg-red-50 text-red-700'
-                : 'bg-amber-50 text-amber-700'
-            }`}
-          >
-            {problem.priority} priority
-          </span>
-          <CitizenStatusBadge status={problem.status} />
+
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span
+              className={`rounded-full px-2.5 py-0.5 text-xs font-bold ring-1 ring-inset ${
+                problem.priority === 'Critical'
+                  ? 'bg-rose-50 text-rose-700 ring-rose-200'
+                  : problem.priority === 'High'
+                  ? 'bg-red-50 text-red-700 ring-red-200'
+                  : problem.priority === 'Medium'
+                  ? 'bg-amber-50 text-amber-700 ring-amber-200'
+                  : 'bg-slate-100 text-slate-700 ring-slate-200'
+              }`}
+            >
+              {problem.priority} Priority{priorityScore ? ` (${priorityScore}/100)` : ''}
+            </span>
+
+            {verificationStatus === 'Pending Verification' ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-800 ring-1 ring-inset ring-amber-300 shadow-sm">
+                <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
+                Pending Verification
+              </span>
+            ) : verificationStatus === 'Verified' ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-800 ring-1 ring-inset ring-emerald-300">
+                <ShieldCheck size={12} className="text-emerald-600" />
+                Verified
+              </span>
+            ) : (
+              <CitizenStatusBadge status={problem.status} />
+            )}
+          </div>
         </div>
       </div>
-      <div className="mt-4 flex items-center justify-end gap-2">
+
+      <div className="mt-4 flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
         {onViewDetails && (
           <button
             type="button"
             onClick={onViewDetails}
-            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
           >
             View Details
           </button>
         )}
         <Link
           to={`/government/problems/${problem.trackId || problem.id}/review`}
-          className="rounded-lg bg-[#12365a] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0e2a47]"
+          className="rounded-lg bg-[#12365a] px-4 py-1.5 text-xs font-bold text-white hover:bg-[#0e2a47] shadow-sm transition"
         >
           Review Problem
         </Link>

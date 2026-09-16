@@ -8,7 +8,6 @@ import { CitizenLayout } from '../../layouts/CitizenLayout'
 import { PageContainer } from '../../components/common/PageContainer'
 import { PageHeader } from '../../components/common/PageHeader'
 import { FormField } from '../../components/forms/FormField'
-import { SelectField } from '../../components/forms/SelectField'
 import { TextAreaField } from '../../components/forms/TextAreaField'
 import { JharkhandMapPicker } from '../../components/citizen/JharkhandMapPicker'
 import { TrackIdConfirmationModal } from '../../components/citizen/TrackIdConfirmationModal'
@@ -16,23 +15,10 @@ import { useAuth } from '../../context/AuthContext'
 import { useProblems } from '../../context/ProblemContext'
 import { useNotifications } from '../../context/NotificationContext'
 import { JHARKHAND_DISTRICTS, REPORT_PROBLEM_TRANSLATIONS } from '../../data/jharkhandData'
-import { createReport, mapBackendReportToCitizenProblem, type BackendReportPayload } from '../../services/reportService'
+import { createReport, mapBackendReportToCitizenProblem, type BackendReportPayload, type BackendReportResponse } from '../../services/reportService'
 import type { CitizenProblem } from '../../types'
 
-const CATEGORY_KEYS = [
-  'Water and Sanitation',
-  'Healthcare',
-  'Education',
-  'Agriculture',
-  'Environment',
-  'Public Safety',
-  'Accessibility',
-  'Rural Development',
-  'Digital Services',
-  'Other',
-] as const
 
-const URGENCY_KEYS = ['Low', 'Medium', 'High', 'Critical'] as const
 
 const validDistrictNames = JHARKHAND_DISTRICTS.map((d) => d.name)
 
@@ -43,7 +29,6 @@ const schema = z.object({
     .trim()
     .min(1, 'Description is required')
     .max(2000, 'Description must be 2000 characters or fewer'),
-  category: z.string().min(1, 'Category is required'),
   district: z
     .string()
     .refine((val) => validDistrictNames.includes(val), {
@@ -52,7 +37,6 @@ const schema = z.object({
   locality: z.string().trim().optional(),
   landmark: z.string().trim().optional(),
   affectedPeople: z.number().min(0, 'Enter zero or a positive number'),
-  urgency: z.enum(['Low', 'Medium', 'High', 'Critical']),
   existingEfforts: z.string().optional(),
   expectedOutcome: z.string().optional(),
   consent: z.boolean().refine(Boolean, 'Consent is required'),
@@ -70,6 +54,7 @@ export function SubmitProblemPage() {
 
   const [files, setFiles] = useState<string[]>([])
   const [createdProblem, setCreatedProblem] = useState<CitizenProblem | null>(null)
+  const [submittedReport, setSubmittedReport] = useState<BackendReportResponse | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
 
   const {
@@ -82,7 +67,6 @@ export function SubmitProblemPage() {
     resolver: zodResolver(schema),
     defaultValues: {
       affectedPeople: 0,
-      urgency: 'Medium',
       consent: false,
       description: '',
       district: '',
@@ -108,10 +92,9 @@ export function SubmitProblemPage() {
   const submit = async (values: Values) => {
     setApiError(null)
 
-    // Build payload with exact backend field names
+    // Build payload with exact backend field names - category and priority are omitted so AI pre-screening determines them
     const payload: BackendReportPayload = {
       problem_title: values.title.trim(),
-      category: values.category,
       context_and_desired_outcome: values.description.trim() || null,
       existing_efforts: values.existingEfforts?.trim() || null,
       expected_outcome: values.expectedOutcome?.trim() || null,
@@ -121,24 +104,24 @@ export function SubmitProblemPage() {
       address_or_landmark: values.landmark?.trim() || values.locality?.trim() || `${values.district}, Jharkhand`,
       latitude: coords ? coords.lat : null,
       longitude: coords ? coords.lng : null,
-      priority: values.urgency,
     }
 
     try {
-      // Call POST /api/reports - backend generates track_id
+      // Call POST /api/reports - backend generates track_id and completes AI Pre-Screening
       const backendReport = await createReport(payload)
       const mappedProblem = mapBackendReportToCitizenProblem(backendReport)
       addBackendProblem(mappedProblem)
+      setSubmittedReport(backendReport)
       setCreatedProblem(mappedProblem)
 
       // Emit notification for citizen and administration
       notify({
         type: 'report_submitted',
-        title: 'Report Registered Successfully',
-        message: `Problem "${backendReport.problem_title}" was registered in PostgreSQL (Track ID: ${backendReport.track_id}).`,
+        title: 'Report Registered & Pre-Screened',
+        message: `Problem "${backendReport.problem_title}" registered (Track ID: ${backendReport.track_id}) and pre-screened.`,
         targetRole: ['citizen', 'government', 'admin'],
         relatedTrackId: backendReport.track_id,
-        priority: (values.urgency as any) || 'Normal',
+        priority: (backendReport.priority as any) || 'Normal',
         source: 'Citizen Portal',
         actionUrl: `/citizen/problems/${backendReport.track_id}`,
       })
@@ -163,7 +146,11 @@ export function SubmitProblemPage() {
         {createdProblem && (
           <TrackIdConfirmationModal
             problem={createdProblem}
-            onClose={() => setCreatedProblem(null)}
+            backendReport={submittedReport}
+            onClose={() => {
+              setCreatedProblem(null)
+              setSubmittedReport(null)
+            }}
             translations={t}
           />
         )}
@@ -200,32 +187,6 @@ export function SubmitProblemPage() {
               <p className="-mt-3 text-right text-xs text-slate-400">
                 {description.length}/2000 {t.descriptionCharCount}
               </p>
-
-              <div className="grid gap-5 md:grid-cols-2">
-                <SelectField
-                  label={t.categoryLabel}
-                  options={[
-                    { label: t.categorySelectPrompt, value: '' },
-                    ...CATEGORY_KEYS.map((value) => ({
-                      label: t.categories[value] || value,
-                      value,
-                    })),
-                  ]}
-                  {...register('category')}
-                  error={errors.category ? t.categoryError : undefined}
-                  required
-                />
-                <SelectField
-                  label={t.urgencyLabel}
-                  options={URGENCY_KEYS.map((value) => ({
-                    label: t.urgencyLevels[value] || value,
-                    value,
-                  }))}
-                  {...register('urgency')}
-                  error={errors.urgency ? t.urgencyError : undefined}
-                  required
-                />
-              </div>
 
               <FormField
                 label={t.affectedPeopleLabel}
@@ -361,13 +322,6 @@ export function SubmitProblemPage() {
               className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
             >
               {t.cancelButton}
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/citizen/problems')}
-              className="rounded-xl border border-[#12365a] px-5 py-2.5 text-sm font-semibold text-[#12365a] transition hover:bg-slate-50"
-            >
-              {t.viewReportsButton}
             </button>
             <button
               type="submit"

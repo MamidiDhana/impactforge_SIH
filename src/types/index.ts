@@ -49,6 +49,25 @@ export interface Problem {
   id: string; title: string; description: string; category: string; location: string
   status: ProblemStatus; submittedAt: string; similarCount?: number
 }
+export interface AIPreScreeningInfo {
+  status: 'completed' | 'needs_review' | 'failed' | 'pending' | string
+  category: string
+  subcategory?: string | null
+  problem_type?: string | null
+  confidence_score?: number | null
+  category_status?: string | null
+  priority: 'Low' | 'Medium' | 'High' | 'Critical' | string
+  priority_score?: number | null
+  priority_reasons?: string[] | null
+  priority_status?: string | null
+  has_similar_live_problem: boolean
+  top_similarity_score?: number | null
+  top_similar_match?: any | null
+  similar_matches?: any[] | null
+  similarity_status?: string | null
+  verification_status?: string | null
+}
+
 export interface CitizenProblem extends Omit<Problem, 'status'> {
   trackId?: string
   citizenId?: string
@@ -69,6 +88,19 @@ export interface CitizenProblem extends Omit<Problem, 'status'> {
   citizenFeedback?: CitizenFeedback
   governmentComment?: string
   rejectionReason?: string
+  ai_pre_screening?: AIPreScreeningInfo
+  ai_category?: string | null
+  ai_subcategory?: string | null
+  ai_problem_type?: string | null
+  ai_confidence_score?: number | null
+  ai_summary?: string | null
+  ai_priority?: string | null
+  ai_priority_score?: number | null
+  ai_priority_reasons?: string[] | null
+  ai_similarity_status?: string | null
+  ai_similarity_matches?: any[] | null
+  ai_duplicate_candidates?: any[] | null
+  verification_status?: string | null
 }
 export interface GovernmentProblem extends Omit<CitizenProblem, 'status'> { status: ValidationStatus; priority: 'Low' | 'Medium' | 'High' | 'Critical'; citizenLabel: string; attachedFiles: string[]; validationDate?: string; currentStage?: string; matchingStatus?: string }
 export interface GovernmentProject extends Project { category: string; facultyLead: string; beneficiaries: number; lastUpdated: string; stage: string }

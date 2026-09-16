@@ -194,11 +194,13 @@ def find_similar_reports(
     Finds top similar reports for a given report in PostgreSQL.
     Filters by minimum similarity threshold (0.55) and caps results at top_k (5).
     """
-    # Exclude the report itself
+    # Exclude the report itself and filter strictly against active LIVE citizen problems
     candidates: List[Report] = (
         db.query(Report)
         .filter(Report.id != report.id)
         .filter(Report.track_id != report.track_id)
+        .filter(Report.status != "Rejected")
+        .filter(func.coalesce(Report.verification_status, "") != "Rejected")
         .all()
     )
 

@@ -167,10 +167,13 @@ def create_report(
 ) -> Report:
     track_id = generate_unique_track_id(db)
 
+    initial_category = payload.category or "Civic Issue"
+    initial_priority = payload.priority or "Medium"
+
     db_report = Report(
         track_id=track_id,
         problem_title=payload.problem_title,
-        category=payload.category,
+        category=initial_category,
         context_and_desired_outcome=payload.context_and_desired_outcome,
         existing_efforts=payload.existing_efforts,
         expected_outcome=payload.expected_outcome,
@@ -180,7 +183,7 @@ def create_report(
         address_or_landmark=payload.address_or_landmark,
         latitude=payload.latitude,
         longitude=payload.longitude,
-        priority=payload.priority,
+        priority=initial_priority,
         status=ReportStatus.OPEN.value,
         verification_status="Pending Verification",
         citizen_id=current_user.id if current_user else None,
@@ -232,20 +235,56 @@ def create_report(
     db.commit()
     db.refresh(db_report)
 
-    # Trigger AI problem categorization (Phase 1 Part 1)
-    analyze_and_store_report_ai(db, db_report)
+    # AI Pre-Screening: Category classification (Phase 1 Part 1)
+    try:
+        analyze_and_store_report_ai(db, db_report)
+        # If no manual category was specified, adopt the AI-determined category
+        if (not payload.category or payload.category == "Civic Issue") and db_report.ai_category:
+            db_report.category = db_report.ai_category
+            db.commit()
+            db.refresh(db_report)
+    except Exception as e:
+        logger.error(f"Error executing AI categorization in pre-screening for {track_id}: {e}", exc_info=True)
 
-    # Trigger AI priority and urgency scoring (Phase 1 Part 2)
-    analyze_and_store_report_priority(db, db_report)
+    # AI Pre-Screening: Priority assessment (Phase 1 Part 2)
+    try:
+        analyze_and_store_report_priority(db, db_report)
+        # If no manual priority was specified, adopt the AI-assessed priority
+        if not payload.priority and db_report.ai_priority:
+            db_report.priority = db_report.ai_priority
+            db.commit()
+            db.refresh(db_report)
+    except Exception as e:
+        logger.error(f"Error executing AI priority scoring in pre-screening for {track_id}: {e}", exc_info=True)
 
-    # Trigger AI similar problem detection (Phase 1 Part 3)
-    analyze_and_store_report_similarity(db, db_report)
+    # Keep notification message and priority updated to reflect AI pre-screening findings
+    try:
+        if notification:
+            notification.message = f"New report in {db_report.district} ({db_report.category}): {db_report.problem_title}"
+            notification.priority = "Important" if db_report.priority in ["High", "Critical"] else "Normal"
+            db.commit()
+    except Exception as e:
+        logger.debug(f"Non-critical notification update error: {e}")
 
-    # Trigger AI official duplicate analysis (Phase 1 Part 4)
-    analyze_and_store_report_duplicates(db, db_report)
+    # AI Pre-Screening: Semantic duplicate/similarity check against existing LIVE problems (Phase 1 Part 3)
+    try:
+        analyze_and_store_report_similarity(db, db_report)
+    except Exception as e:
+        logger.error(f"Error executing AI similarity detection in pre-screening for {track_id}: {e}", exc_info=True)
+
+    # AI Pre-Screening: Duplicate candidates analysis (Phase 1 Part 4)
+    try:
+        analyze_and_store_report_duplicates(db, db_report)
+    except Exception as e:
+        logger.error(f"Error executing duplicate analysis in pre-screening for {track_id}: {e}", exc_info=True)
+
+    db.refresh(db_report)
 
     # Trigger AI capability extraction (Phase 1 Part 5)
-    analyze_and_store_report_capabilities(db, db_report)
+    try:
+        analyze_and_store_report_capabilities(db, db_report)
+    except Exception as e:
+        logger.error(f"Error executing capability extraction for {track_id}: {e}", exc_info=True)
 
     # Trigger AI HEI matching (Phase 1 Part 6)
     try:

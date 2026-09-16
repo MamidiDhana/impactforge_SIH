@@ -72,7 +72,7 @@ class ReportStatus(str, Enum):
 
 class ReportBase(BaseModel):
     problem_title: str = Field(..., min_length=3, max_length=255, description="Title of the reported problem")
-    category: str = Field(..., min_length=2, max_length=100, description="Category of problem (e.g., Water / Facilities)")
+    category: Optional[str] = Field(default=None, max_length=100, description="Category of problem (e.g., Water / Facilities) - optional, determined by AI if omitted")
     context_and_desired_outcome: Optional[str] = Field(None, description="Detailed problem background and desired outcome")
     existing_efforts: Optional[str] = Field(None, description="Previous or existing attempts to resolve the issue")
     expected_outcome: Optional[str] = Field(None, description="Measurable impact or expected resolution")
@@ -82,7 +82,7 @@ class ReportBase(BaseModel):
     address_or_landmark: str = Field(..., min_length=1, description="Specific location or landmark")
     latitude: Optional[float] = Field(None, description="GPS Latitude coordinate")
     longitude: Optional[float] = Field(None, description="GPS Longitude coordinate")
-    priority: str = Field(default="Medium", description="Priority level (Low, Medium, High, Critical)")
+    priority: Optional[str] = Field(default=None, description="Priority level (Low, Medium, High, Critical) - optional, determined by AI if omitted")
 
 
 class ReportCreate(ReportBase):
@@ -122,7 +122,9 @@ class ReportCreate(ReportBase):
 
     @field_validator("priority")
     @classmethod
-    def validate_priority(cls, v: str) -> str:
+    def validate_priority(cls, v: Optional[str]) -> Optional[str]:
+        if not v:
+            return None
         allowed = ["Low", "Medium", "High", "Critical"]
         for p in allowed:
             if p.lower() == v.strip().lower():
@@ -162,6 +164,25 @@ class ReportStatusHistoryResponse(BaseModel):
     remarks: Optional[str] = None
 
 
+class AIPreScreeningSummary(BaseModel):
+    status: str = "completed"
+    category: str
+    subcategory: Optional[str] = None
+    problem_type: Optional[str] = None
+    confidence_score: Optional[float] = None
+    category_status: Optional[str] = "pending"
+    priority: str
+    priority_score: Optional[int] = None
+    priority_reasons: Optional[List[str]] = None
+    priority_status: Optional[str] = "pending"
+    has_similar_live_problem: bool = False
+    top_similarity_score: Optional[float] = None
+    top_similar_match: Optional[Dict[str, Any]] = None
+    similar_matches: Optional[List[Dict[str, Any]]] = None
+    similarity_status: Optional[str] = "pending"
+    verification_status: Optional[str] = "Pending Verification"
+
+
 class ReportResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -189,6 +210,8 @@ class ReportResponse(BaseModel):
     remarks_updated_by: Optional[str] = None
     remarks_updated_at: Optional[datetime] = None
     resolved_at: Optional[datetime] = None
+    # Consolidated AI Pre-Screening summary for citizen problem submission
+    ai_pre_screening: Optional[AIPreScreeningSummary] = None
     # AI Categorization and Analysis (Phase 1 Part 1)
     ai_category: Optional[str] = None
     ai_subcategory: Optional[str] = None

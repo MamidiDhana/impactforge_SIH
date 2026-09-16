@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { CheckCircle2, Clock3, Info, MapPin } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { CitizenLayout } from '../../layouts/CitizenLayout'
@@ -7,6 +8,7 @@ import { CitizenStatusBadge } from '../../components/citizen/CitizenStatusBadge'
 import { ResponsiveCard } from '../../components/common/ResponsiveCard'
 import { EmptyState } from '../../components/common/EmptyState'
 import { JharkhandMapPreview } from '../../components/citizen/JharkhandMapPreview'
+import { getReportByTrackId, type BackendReportResponse } from '../../services/reportService'
 import { useProblems } from '../../context/ProblemContext'
 
 export function CitizenProblemDetailsPage() {
@@ -17,6 +19,19 @@ export function CitizenProblemDetailsPage() {
     getProblemById(id || '') ||
     getProblemByTrackId(id || '') ||
     citizenProblems.find((item) => item.id === id || item.trackId === id)
+
+  const [liveReport, setLiveReport] = useState<BackendReportResponse | null>(null)
+
+  useEffect(() => {
+    const trackIdToFetch = problem?.trackId
+    if (trackIdToFetch) {
+      getReportByTrackId(trackIdToFetch)
+        .then((data) => setLiveReport(data))
+        .catch(() => {
+          // Keep problem fallback
+        })
+    }
+  }, [problem?.trackId])
 
   if (!problem) {
     return (
@@ -41,6 +56,11 @@ export function CitizenProblemDetailsPage() {
 
   const timeline = problem.timelineStages || []
 
+  const isPendingGovVerification =
+    (liveReport?.verification_status || problem.verification_status || 'Pending Verification') === 'Pending Verification' &&
+    problem.status !== 'Validated' &&
+    problem.status !== 'Rejected'
+
   return (
     <CitizenLayout title="Problem Details">
       <PageContainer>
@@ -53,11 +73,17 @@ export function CitizenProblemDetailsPage() {
             { label: problem.trackId || 'Details' },
           ]}
           action={
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-md bg-[#12365a] px-2.5 py-1 font-mono text-xs font-bold text-white">
                 {problem.trackId}
               </span>
               <CitizenStatusBadge status={problem.status} />
+              {isPendingGovVerification && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-800 ring-1 ring-inset ring-amber-300 shadow-sm">
+                  <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
+                  Pending Government Verification
+                </span>
+              )}
             </div>
           }
         />

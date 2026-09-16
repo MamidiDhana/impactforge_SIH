@@ -8,7 +8,6 @@ import {
 import {
   getReports,
   isCitizenSubmittedReport,
-  deduplicateReports,
   mapBackendReportToCitizenProblem,
 } from '../services/reportService'
 import { useAuth } from './AuthContext'
@@ -95,8 +94,7 @@ export function ProblemProvider({ children }: { children: ReactNode }) {
     try {
       const data = await getReports()
       const citizenReports = data.filter(isCitizenSubmittedReport)
-      const deduplicated = deduplicateReports(citizenReports)
-      const mapped = deduplicated.map(mapBackendReportToCitizenProblem)
+      const mapped = citizenReports.map(mapBackendReportToCitizenProblem)
       setProblems(mapped)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to connect to backend server.'

@@ -1,9 +1,9 @@
-import type { CitizenProblem, CitizenProblemStatus, TrackingStage } from '../types'
+import type { CitizenProblem, CitizenProblemStatus, TrackingStage, AIPreScreeningInfo } from '../types'
 import { buildInitialStages } from '../data/jharkhandData'
 
 export interface BackendReportPayload {
   problem_title: string
-  category: string
+  category?: string | null
   context_and_desired_outcome: string | null
   existing_efforts: string | null
   expected_outcome: string | null
@@ -13,7 +13,7 @@ export interface BackendReportPayload {
   address_or_landmark: string
   latitude: number | null
   longitude: number | null
-  priority: string
+  priority?: string | null
 }
 
 export interface BackendReportResponse {
@@ -121,7 +121,11 @@ export interface BackendReportResponse {
   ai_routing_reason?: string | null
   ai_routing_analyzed_at?: string | null
   ai_routing_model?: string | null
+  // AI Pre-Screening summary
+  ai_pre_screening?: AIPreScreeningResult | null
 }
+
+export type AIPreScreeningResult = AIPreScreeningInfo
 
 
 export interface OfficialReviewDetail {
@@ -927,10 +931,9 @@ export function isCitizenSubmittedReport(report: BackendReportResponse): boolean
   const trackId = (report.track_id || '').trim().toUpperCase()
 
   const testKeywords = [
-    'test',
-    'resiliency',
-    'resilience',
-    'verification',
+    'ai failure resiliency',
+    'resiliency test',
+    'resilience test',
     'gov user',
     'gov problem',
     'gov hei',
@@ -938,13 +941,18 @@ export function isCitizenSubmittedReport(report: BackendReportResponse): boolean
     "citizen's own",
     'other citizen',
     'raw test',
-    'automated',
-    'synthetic',
-    'demo',
-    'mock',
+    'automated test',
+    'synthetic test',
+    'demo test',
+    'mock report',
     'pending unvalidated',
   ]
-  if (testKeywords.some((kw) => title.includes(kw))) {
+  if (
+    title.startsWith('test:') ||
+    title.startsWith('test -') ||
+    title.startsWith('[test]') ||
+    testKeywords.some((kw) => title.includes(kw))
+  ) {
     return false
   }
 
@@ -1906,21 +1914,43 @@ export function mapBackendReportToCitizenProblem(report: BackendReportResponse):
       stages[0].date = dateStr
     }
   } else {
-    // Open / Submitted
-    stageIndex = 1
+    // Open / Submitted: AI Pre-Screening has completed immediately after citizen submission,
+    // and the problem is now Pending Government Verification.
+    stageIndex = 2
     if (stages[0]) {
       stages[0].status = 'Completed'
       stages[0].date = dateStr
     }
     if (stages[1]) {
-      stages[1].status = 'In Progress'
+      stages[1].status = 'Completed'
       stages[1].date = dateStr
+    }
+    if (stages[2]) {
+      stages[2].status = 'In Progress'
+      stages[2].date = dateStr
     }
   }
 
   const priorityNormalized = (['Low', 'Medium', 'High', 'Critical'].includes(report.priority)
     ? report.priority
     : 'Medium') as 'Low' | 'Medium' | 'High' | 'Critical'
+
+  const preScreening = report.ai_pre_screening || (report.ai_category ? {
+    status: report.ai_analysis_status || 'completed',
+    category: report.ai_category || report.category,
+    subcategory: report.ai_subcategory,
+    problem_type: report.ai_problem_type,
+    confidence_score: report.ai_confidence_score,
+    priority: (report.ai_priority || priorityNormalized) as any,
+    priority_score: report.ai_priority_score,
+    priority_reasons: report.ai_priority_reasons,
+    has_similar_live_problem: (report.ai_similarity_matches && report.ai_similarity_matches.length > 0 && report.ai_similarity_matches[0].similarity_score >= 0.55) || false,
+    top_similarity_score: report.ai_similarity_matches?.[0]?.similarity_score,
+    top_similar_match: report.ai_similarity_matches?.[0],
+    similar_matches: report.ai_similarity_matches,
+    similarity_status: report.ai_similarity_status,
+    verification_status: report.verification_status || 'Pending Verification',
+  } : undefined)
 
   return {
     id: `report-${report.track_id}`,
@@ -1942,6 +1972,19 @@ export function mapBackendReportToCitizenProblem(report: BackendReportResponse):
     lastUpdated: dateStr,
     currentStageIndex: stageIndex,
     timelineStages: stages,
+    ai_pre_screening: preScreening,
+    ai_category: report.ai_category,
+    ai_subcategory: report.ai_subcategory,
+    ai_problem_type: report.ai_problem_type,
+    ai_confidence_score: report.ai_confidence_score,
+    ai_summary: report.ai_summary,
+    ai_priority: report.ai_priority,
+    ai_priority_score: report.ai_priority_score,
+    ai_priority_reasons: report.ai_priority_reasons,
+    ai_similarity_status: report.ai_similarity_status,
+    ai_similarity_matches: report.ai_similarity_matches,
+    ai_duplicate_candidates: report.ai_duplicate_candidates,
+    verification_status: report.verification_status || 'Pending Verification',
     requiredCapabilities: ['Civic assessment', 'Field survey', 'Public consultation'],
     requiredResources: [
       {

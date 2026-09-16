@@ -16,7 +16,6 @@ import {
   getReports,
   getReportByTrackId,
   updateReportStatus,
-  deduplicateReports,
   type BackendReportResponse,
 } from '../../services/reportService'
 import { GovernmentReportDetailsModal } from '../../components/government/GovernmentReportDetailsModal'
@@ -52,10 +51,8 @@ export function ProblemQueuePage() {
       // Filter strictly to citizen portal submitted problems
       const citizenReports = data.filter(isCitizenSubmittedReport)
       setRawReports(citizenReports)
-      // Use the exact same deduplication dataset as Government Dashboard
-      const deduplicated = deduplicateReports(citizenReports)
-      // Map to GovernmentProblem interface
-      const mapped = deduplicated.map(mapBackendReportToGovernmentProblem)
+      // Display all live citizen submissions directly in Government Problem Queue
+      const mapped = citizenReports.map(mapBackendReportToGovernmentProblem)
       setProblems(mapped)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to connect to backend server.'
