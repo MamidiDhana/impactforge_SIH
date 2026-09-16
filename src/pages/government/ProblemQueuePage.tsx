@@ -103,21 +103,6 @@ export function ProblemQueuePage() {
     }
   }, [selectedTrackId, rawReports])
 
-  const openDetailsModal = async (trackId: string) => {
-    const found = rawReports.find(
-      (r) => r.track_id.toLowerCase() === trackId.toLowerCase()
-    )
-    if (found) {
-      setSelectedModalReport(found)
-      return
-    }
-    try {
-      const direct = await getReportByTrackId(trackId)
-      setSelectedModalReport(direct)
-    } catch {
-      // ignore
-    }
-  }
 
   const handleUpdateStatus = async (
     trackId: string,
@@ -243,7 +228,6 @@ export function ProblemQueuePage() {
                   key={problem.id}
                   problem={problem}
                   isSelected={isSelected}
-                  onViewDetails={() => openDetailsModal(tid)}
                 />
               )
             })}

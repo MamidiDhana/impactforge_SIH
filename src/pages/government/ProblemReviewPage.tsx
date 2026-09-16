@@ -324,8 +324,8 @@ export function ProblemReviewPage() {
           </div>
         }
       >
-        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          {/* Left Column: Problem Details and Geo-Location Preview */}
+        <div className="grid gap-6 lg:grid-cols-2">
+          {/* Left Column: Problem Details & Evidence */}
           <div className="space-y-6">
             <ResponsiveCard>
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -371,35 +371,6 @@ export function ProblemReviewPage() {
               </div>
             </ResponsiveCard>
 
-            {/* Citizen Location & Map Preview */}
-            <ResponsiveCard>
-              <h2 className="font-[Manrope] text-base font-bold text-[#13243b]">
-                Citizen-Submitted Jharkhand Location Preview
-              </h2>
-              <p className="mt-1 text-xs text-slate-500">
-                Verified geographical coordinates submitted by citizen for field audit and university site visits.
-              </p>
-
-              <div className="mt-4">
-                <JharkhandMapPreview
-                  district={district}
-                  locality={locality}
-                  landmark={landmark}
-                  latitude={latitude}
-                  longitude={longitude}
-                />
-              </div>
-
-              <div className="mt-3 grid gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600 sm:grid-cols-2">
-                <div>
-                  GPS Coordinates: <b>{latitude.toFixed(4)}° N, {longitude.toFixed(4)}° E</b>
-                </div>
-                <div>
-                  Operation Jurisdiction: <b>{district} District Administration</b>
-                </div>
-              </div>
-            </ResponsiveCard>
-
             <ResponsiveCard>
               <h2 className="font-[Manrope] text-lg font-bold text-[#13243b]">
                 Evidence and Context
@@ -428,47 +399,33 @@ export function ProblemReviewPage() {
             </ResponsiveCard>
           </div>
 
-          {/* Right Column: Governance Review Checklist and Protocol */}
+          {/* Right Column: Citizen Location & Map Preview */}
           <div className="space-y-6">
             <ResponsiveCard>
-              <h2 className="font-[Manrope] font-bold text-[#13243b]">
-                Jharkhand Governance Review Checklist
+              <h2 className="font-[Manrope] text-base font-bold text-[#13243b]">
+                Citizen-Submitted Jharkhand Location Preview
               </h2>
               <p className="mt-1 text-xs text-slate-500">
-                Official protocol for validating citizen-reported community issues before administrative escalation.
+                Verified geographical coordinates submitted by citizen for field audit and university site visits.
               </p>
-              <div className="mt-4 grid gap-3 text-sm text-slate-600">
-                {[
-                  'Problem is located within Jharkhand boundaries',
-                  'Location landmark and coordinates are verifiable',
-                  'Urgency and affected population are reasonable',
-                  'Suitable for state university / HEI solution matching',
-                ].map((item) => (
-                  <label key={item} className="flex items-center gap-2">
-                    <input type="checkbox" className="size-4 accent-[#12365a]" defaultChecked />
-                    {item}
-                  </label>
-                ))}
-              </div>
-            </ResponsiveCard>
 
-            <ResponsiveCard>
-              <h2 className="font-[Manrope] font-bold text-[#13243b]">
-                Review Guidelines
-              </h2>
-              <div className="mt-3 space-y-2 text-xs leading-5 text-slate-500">
-                <p>
-                  • <b>Validate:</b> Accepts the submission and routes it into the university/HEI solution pipeline.
-                </p>
-                <p>
-                  • <b>Request Info:</b> Sends an inquiry back to the citizen for supplemental field photos or specifics.
-                </p>
-                <p>
-                  • <b>Redirect:</b> Transmits jurisdiction to the corresponding state department (e.g. Drinking Water, Roads).
-                </p>
-                <p>
-                  • <b>Reject:</b> Formally dismisses grievances outside policy scope with mandatory written justification.
-                </p>
+              <div className="mt-4">
+                <JharkhandMapPreview
+                  district={district}
+                  locality={locality}
+                  landmark={landmark}
+                  latitude={latitude}
+                  longitude={longitude}
+                />
+              </div>
+
+              <div className="mt-3 grid gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600 sm:grid-cols-2">
+                <div>
+                  GPS Coordinates: <b>{latitude.toFixed(4)}° N, {longitude.toFixed(4)}° E</b>
+                </div>
+                <div>
+                  Operation Jurisdiction: <b>{district} District Administration</b>
+                </div>
               </div>
             </ResponsiveCard>
           </div>

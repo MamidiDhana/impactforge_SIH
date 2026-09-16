@@ -100,7 +100,6 @@ export function GovPage({
 export function GovProblemRow({
   problem,
   isSelected,
-  onViewDetails,
 }: {
   problem: GovernmentProblem
   isSelected?: boolean
@@ -210,15 +209,6 @@ export function GovProblemRow({
       </div>
 
       <div className="mt-4 flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
-        {onViewDetails && (
-          <button
-            type="button"
-            onClick={onViewDetails}
-            className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
-          >
-            View Details
-          </button>
-        )}
         <Link
           to={`/government/problems/${problem.trackId || problem.id}/review`}
           className="rounded-lg bg-[#12365a] px-4 py-1.5 text-xs font-bold text-white hover:bg-[#0e2a47] shadow-sm transition"
