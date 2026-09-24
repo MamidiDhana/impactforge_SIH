@@ -246,7 +246,7 @@ class ImpactForgeDuplicateTestCase(unittest.TestCase):
 
     # ==================== 5. Malformed Review Requests ====================
     def test_10_malformed_review_requests_422(self):
-        """Invalid review decisions or missing remarks are rejected with 422."""
+        """Invalid review decisions, deprecated merge action, or missing remarks are rejected with 422."""
         # 1. Invalid decision enum
         resp1 = self.client.patch(
             "/api/reports/IF-JH-2026-0001/duplicate-review",
@@ -259,7 +259,19 @@ class ImpactForgeDuplicateTestCase(unittest.TestCase):
         )
         self.assertEqual(resp1.status_code, 422)
 
-        # 2. Empty remarks
+        # 2. Deprecated merge_duplicate decision is rejected with 422
+        resp_merge = self.client.patch(
+            "/api/reports/IF-JH-2026-0001/duplicate-review",
+            headers=self.auth_header("government"),
+            json={
+                "candidate_track_id": "IF-JH-2026-0002",
+                "decision": "merge_duplicate",
+                "official_remarks": "Attempting merge",
+            },
+        )
+        self.assertEqual(resp_merge.status_code, 422)
+
+        # 3. Empty remarks
         resp2 = self.client.patch(
             "/api/reports/IF-JH-2026-0001/duplicate-review",
             headers=self.auth_header("government"),
@@ -405,10 +417,11 @@ class ImpactForgeDuplicateTestCase(unittest.TestCase):
             )
             self.assertEqual(resp.status_code, 200)
 
-            # Query database directly to confirm fields remain untouched
+            # Query database directly to confirm status transition and preservation
             db.refresh(r)
-            self.assertEqual(r.status, "Open", "Status must not be mutated!")
-            self.assertEqual(r.priority, "Critical", "Priority must not be mutated!")
+            self.assertEqual(r.status, "Duplicate", "Status should transition to Duplicate on confirm_duplicate!")
+            self.assertEqual(r.verification_status, "Duplicate")
+            self.assertEqual(r.priority, "Critical", "Priority must be preserved!")
             self.assertIsNone(r.resolved_at, "Must not auto-resolve report!")
         finally:
             db.close()
@@ -450,6 +463,87 @@ class ImpactForgeDuplicateTestCase(unittest.TestCase):
         # Part 4: Duplicate analysis populated
         self.assertIn(rep["ai_duplicate_status"], ["no_candidates", "needs_review", "completed", "reviewed"])
         self.assertIsInstance(rep["ai_duplicate_candidates"], list)
+
+    def test_15_citizen_name_and_affected_people_persistence(self):
+        """Verify citizen submitter name and affected people count are saved and retrieved correctly."""
+        create_resp = self.client.post(
+            "/api/reports",
+            headers=self.auth_header("citizen"),
+            json={
+                "title": "Severe contaminated ground water supply affecting community",
+                "description": "Ground water smells of sulfur and 750 residents are affected.",
+                "district": "Dhanbad",
+                "locality": "Jharia",
+                "address_or_landmark": "Ward 4 Community Center",
+                "affected_people": 750,
+            },
+        )
+        self.assertEqual(create_resp.status_code, 201)
+        data = create_resp.json()
+        track_id = data["track_id"]
+        self.assertEqual(data["affected_people"], 750)
+        self.assertEqual(data["citizen_name"], "Asha Rao")
+
+        # Lookup via GET /api/reports/{track_id}
+        get_resp = self.client.get(f"/api/reports/{track_id}")
+        self.assertEqual(get_resp.status_code, 200)
+        lookup_data = get_resp.json()
+        self.assertEqual(lookup_data["affected_people"], 750)
+        self.assertEqual(lookup_data["citizen_name"], "Asha Rao")
+
+    def test_16_duplicate_linking_preserves_citizen_info(self):
+        """Verify linking duplicate problem preserves affected people and citizen name in PostgreSQL."""
+        # 1. Create canonical problem
+        can_resp = self.client.post(
+            "/api/reports",
+            headers=self.auth_header("citizen"),
+            json={
+                "title": "Broken transformer in Sector 3 causing blackout",
+                "description": "Power outage in Sector 3 for past 24 hours.",
+                "district": "Bokaro",
+                "locality": "Sector 3",
+                "address_or_landmark": "Near Main Substation",
+                "affected_people": 1200,
+            },
+        )
+        self.assertEqual(can_resp.status_code, 201)
+        can_track_id = can_resp.json()["track_id"]
+
+        # 2. Create duplicate problem
+        dup_resp = self.client.post(
+            "/api/reports",
+            headers=self.auth_header("citizen"),
+            json={
+                "title": "Blackout in Sector 3 due to damaged substation",
+                "description": "Entire block without power due to blown transformer.",
+                "district": "Bokaro",
+                "locality": "Sector 3",
+                "address_or_landmark": "Substation area",
+                "affected_people": 450,
+            },
+        )
+        self.assertEqual(dup_resp.status_code, 201)
+        dup_track_id = dup_resp.json()["track_id"]
+
+        # 3. Government officer links duplicate to canonical
+        review_resp = self.client.patch(
+            f"/api/reports/{dup_track_id}/duplicate-review",
+            headers=self.auth_header("government"),
+            json={
+                "candidate_track_id": can_track_id,
+                "decision": "confirm_duplicate",
+                "official_remarks": "Confirmed duplicate issue in Sector 3 Bokaro.",
+            },
+        )
+        self.assertEqual(review_resp.status_code, 200)
+
+        # 4. Verify duplicate problem status is Duplicate and info preserved
+        get_dup = self.client.get(f"/api/reports/{dup_track_id}")
+        self.assertEqual(get_dup.status_code, 200)
+        dup_data = get_dup.json()
+        self.assertEqual(dup_data["status"], "Duplicate")
+        self.assertEqual(dup_data["affected_people"], 450)
+        self.assertEqual(dup_data["citizen_name"], "Asha Rao")
 
 
 if __name__ == "__main__":

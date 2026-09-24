@@ -28,7 +28,7 @@ def get_analytics_summary(
     district: Optional[str] = Query(None, description="Optional district filter"),
     db: Session = Depends(get_db),
 ) -> AnalyticsSummary:
-    query = db.query(Report)
+    query = db.query(Report).filter(Report.is_active == True)
     if district:
         query = query.filter(func.lower(Report.district) == district.strip().lower())
 
@@ -79,7 +79,7 @@ def get_status_distribution(
     district: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ) -> List[StatusDistribution]:
-    query = db.query(Report.status, func.count(Report.id).label("count"))
+    query = db.query(Report.status, func.count(Report.id).label("count")).filter(Report.is_active == True)
     if district:
         query = query.filter(func.lower(Report.district) == district.strip().lower())
 
@@ -105,7 +105,7 @@ def get_category_distribution(
     district: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ) -> List[CategoryDistribution]:
-    query = db.query(Report.category, func.count(Report.id).label("count"))
+    query = db.query(Report.category, func.count(Report.id).label("count")).filter(Report.is_active == True)
     if district:
         query = query.filter(func.lower(Report.district) == district.strip().lower())
 
@@ -128,7 +128,7 @@ def get_category_distribution(
     summary="Get district problem density and resolution counts",
 )
 def get_district_distribution(db: Session = Depends(get_db)) -> List[DistrictDistribution]:
-    reports = db.query(Report.district, Report.status).all()
+    reports = db.query(Report.district, Report.status).filter(Report.is_active == True).all()
     district_map = {}
     for d, s in reports:
         if d not in district_map:
@@ -156,7 +156,7 @@ def get_urgency_distribution(
     district: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ) -> List[UrgencyDistribution]:
-    query = db.query(Report.priority, func.count(Report.id).label("count"))
+    query = db.query(Report.priority, func.count(Report.id).label("count")).filter(Report.is_active == True)
     if district:
         query = query.filter(func.lower(Report.district) == district.strip().lower())
 
@@ -173,7 +173,7 @@ def get_trends(
     days: int = Query(30, ge=1, le=365),
     db: Session = Depends(get_db),
 ) -> List[TrendDataPoint]:
-    reports = db.query(Report.created_at, Report.status).order_by(Report.created_at.asc()).all()
+    reports = db.query(Report.created_at, Report.status).filter(Report.is_active == True).order_by(Report.created_at.asc()).all()
     date_map = {}
     for r in reports:
         date_str = r[0].strftime("%Y-%m-%d")
@@ -217,7 +217,7 @@ from app.services.project_analytics_service import (
 def get_resolution_performance(db: Session = Depends(get_db)) -> ResolutionPerformance:
     resolved = (
         db.query(Report)
-        .filter(Report.resolved_at != None, func.lower(Report.status) == "resolved")
+        .filter(Report.is_active == True, Report.resolved_at != None, func.lower(Report.status) == "resolved")
         .all()
     )
 

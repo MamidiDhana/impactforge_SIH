@@ -123,6 +123,14 @@ def calculate_report_similarity(
     Computes explainable similarity between target report and candidate report.
     Applies text semantic similarity with metadata weighting for district, locality, and category.
     """
+    target_title = (target_report.problem_title or "").strip().lower()
+    cand_title = (candidate_report.problem_title or "").strip().lower()
+    is_exact_title = bool(target_title and target_title == cand_title)
+
+    target_desc = (target_report.context_and_desired_outcome or "").strip().lower()
+    cand_desc = (candidate_report.context_and_desired_outcome or "").strip().lower()
+    is_exact_desc = bool(target_desc and target_desc == cand_desc)
+
     target_text = prepare_report_search_text(
         title=target_report.problem_title,
         description=target_report.context_and_desired_outcome,
@@ -142,9 +150,18 @@ def calculate_report_similarity(
         locality=candidate_report.locality,
     )
 
-    vec_target = compute_tf_idf_vector(tokenize_text(target_text), idf_dict)
-    vec_cand = compute_tf_idf_vector(tokenize_text(candidate_text), idf_dict)
+    tokens_target = tokenize_text(target_text)
+    tokens_cand = tokenize_text(candidate_text)
+
+    set_target = set(tokens_target)
+    set_cand = set(tokens_cand)
+    jaccard = len(set_target & set_cand) / len(set_target | set_cand) if (set_target | set_cand) else 0.0
+
+    vec_target = compute_tf_idf_vector(tokens_target, idf_dict)
+    vec_cand = compute_tf_idf_vector(tokens_cand, idf_dict)
     text_cosine = calculate_cosine_similarity(vec_target, vec_cand)
+
+    base_text_sim = max(text_cosine, jaccard)
 
     # Metadata Weighting & Geographic/Domain Alignment:
     target_dist = (target_report.district or "").strip().lower()
@@ -161,23 +178,28 @@ def calculate_report_similarity(
     loc_tokens_cand = set(cand_loc.split())
     shared_loc = bool(loc_tokens_target & loc_tokens_cand)
 
-    # Weight adjustment formula:
-    # 1. Same district boosts credibility of being the same issue
-    # 2. Different district dampens similarity significantly
-    # 3. Same locality gives additional local co-location confidence
-    if same_district and same_category:
-        if shared_loc or target_loc == cand_loc:
-            # Identical locality and same category: boost to catch co-located & duplicate complaints
-            final_score = text_cosine * 1.20
+    if is_exact_title and (is_exact_desc or not target_desc or not cand_desc):
+        final_score = 1.0
+    elif is_exact_title:
+        final_score = 1.0 if (same_district or same_category) else max(0.95, base_text_sim)
+    elif base_text_sim >= 0.85:
+        if same_district and same_category:
+            final_score = min(1.0, base_text_sim * 1.15)
+        elif same_district or same_category:
+            final_score = base_text_sim
         else:
-            final_score = text_cosine * 1.05
+            final_score = base_text_sim * 0.90
+    elif same_district and same_category:
+        if shared_loc or target_loc == cand_loc:
+            final_score = base_text_sim * 1.20
+        else:
+            final_score = base_text_sim * 1.05
     elif same_district and not same_category:
-        final_score = text_cosine * 0.80
+        final_score = base_text_sim * 0.85
     elif not same_district and same_category:
-        final_score = text_cosine * 0.70
+        final_score = base_text_sim * 0.75
     else:
-        # Different district and different category
-        final_score = text_cosine * 0.50
+        final_score = base_text_sim * 0.50
 
     final_score = max(0.0, min(1.0, round(final_score, 4)))
     level = determine_similarity_level(final_score)
@@ -197,6 +219,7 @@ def find_similar_reports(
     # Exclude the report itself and filter strictly against active LIVE citizen problems
     candidates: List[Report] = (
         db.query(Report)
+        .filter(Report.is_active == True)
         .filter(Report.id != report.id)
         .filter(Report.track_id != report.track_id)
         .filter(Report.status != "Rejected")

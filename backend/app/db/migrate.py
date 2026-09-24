@@ -27,6 +27,9 @@ DEMO_USERS = [
         "email": "asha.rao@jharkhand.in",
         "role": "citizen",
         "organization_name": "Community Member",
+        "department": "Civil Society",
+        "designation": "Citizen Contributor",
+        "office_location": "Ranchi, Jharkhand",
         "phone": "+91 98765 43210",
         "password": "demo-password",
     },
@@ -35,6 +38,9 @@ DEMO_USERS = [
         "email": "vikram.singh@jharkhand.gov.in",
         "role": "government",
         "organization_name": "District Innovation Cell, Ranchi",
+        "department": "District Innovation Cell",
+        "designation": "Government Validator",
+        "office_location": "Ranchi, Jharkhand",
         "phone": "+91 94311 00001",
         "password": "demo-password",
     },
@@ -43,6 +49,9 @@ DEMO_USERS = [
         "email": "dean.rnd@bitmesra.ac.in",
         "role": "hei",
         "organization_name": "Birla Institute of Technology (BIT) Mesra",
+        "department": "Dean R&D",
+        "designation": "Institutional Dean",
+        "office_location": "Mesra, Ranchi, Jharkhand",
         "phone": "+91 94311 00002",
         "password": "demo-password",
     },
@@ -51,6 +60,9 @@ DEMO_USERS = [
         "email": "prof.menon@tiss.edu",
         "role": "faculty",
         "organization_name": "Tata Institute of Social Sciences",
+        "department": "Social Sciences",
+        "designation": "Professor & Principal Investigator",
+        "office_location": "Ranchi, Jharkhand",
         "phone": "+91 94311 00003",
         "password": "demo-password",
     },
@@ -59,6 +71,9 @@ DEMO_USERS = [
         "email": "partner@impactforge.org",
         "role": "partner",
         "organization_name": "CivicGrid Technologies",
+        "department": "Corporate Partnerships",
+        "designation": "CSR Director",
+        "office_location": "Jamshedpur, Jharkhand",
         "phone": "+91 94311 00004",
         "password": "demo-password",
     },
@@ -67,6 +82,9 @@ DEMO_USERS = [
         "email": "admin@impactforge.org",
         "role": "admin",
         "organization_name": "ImpactForge PMU",
+        "department": "Project Monitoring Unit",
+        "designation": "Super Admin",
+        "office_location": "Ranchi, Jharkhand",
         "phone": "+91 94311 00005",
         "password": "demo-password",
     },
@@ -84,6 +102,8 @@ def run_migrations():
         columns_to_add = [
             ("verification_status", "VARCHAR(30) DEFAULT 'Pending Verification'"),
             ("citizen_id", "INTEGER REFERENCES users(id) ON DELETE SET NULL"),
+            ("affected_people", "INTEGER DEFAULT 0"),
+            ("citizen_name", "VARCHAR(255)"),
             ("assigned_to", "VARCHAR(255)"),
             ("assigned_role", "VARCHAR(50)"),
             ("assigned_by", "VARCHAR(255)"),
@@ -164,6 +184,7 @@ def run_migrations():
             ("ai_project_risk_score", "FLOAT"),
             ("ai_project_analytics_model", "VARCHAR(100)"),
             ("ai_project_analytics_analyzed_at", "TIMESTAMP WITH TIME ZONE"),
+            ("is_active", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ]
 
         # Check and attempt pgvector extension safely without aborting transaction
@@ -179,16 +200,69 @@ def run_migrations():
         except Exception as e:
             logger.info(f"pgvector extension check note: {e}; using JSON embedding & TF-IDF fallback.")
 
+        existing_cols = {
+            row[0].lower()
+            for row in conn.execute(
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = 'reports';")
+            )
+        }
         for col_name, col_type in columns_to_add:
-            try:
-                conn.execute(
-                    text(f"ALTER TABLE reports ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
-                )
-                logger.info(f"Column verified or added: reports.{col_name}")
-            except Exception as e:
-                logger.warning(f"Note on adding column {col_name}: {e}")
+            if col_name.lower() not in existing_cols:
+                try:
+                    conn.execute(
+                        text(f"ALTER TABLE reports ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+                    )
+                    logger.info(f"Column verified or added: reports.{col_name}")
+                except Exception as e:
+                    logger.warning(f"Note on adding column {col_name}: {e}")
 
-        # 3. Create indexes safely
+        # 3. Add columns to users table safely
+        user_columns_to_add = [
+            ("department", "VARCHAR(255)"),
+            ("designation", "VARCHAR(255)"),
+            ("office_location", "VARCHAR(255)"),
+            ("avatar_url", "VARCHAR(500)"),
+        ]
+        existing_user_cols = {
+            row[0].lower()
+            for row in conn.execute(
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = 'users';")
+            )
+        }
+        for col_name, col_type in user_columns_to_add:
+            if col_name.lower() not in existing_user_cols:
+                try:
+                    conn.execute(
+                        text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+                    )
+                    logger.info(f"Column verified or added: users.{col_name}")
+                except Exception as e:
+                    logger.warning(f"Note on adding user column {col_name}: {e}")
+
+        # 4. Add columns to notifications table safely
+        notification_columns_to_add = [
+            ("action_url", "VARCHAR(255)"),
+            ("read_at", "TIMESTAMP WITH TIME ZONE"),
+            ("event_key", "VARCHAR(100)"),
+            ("related_entity_id", "VARCHAR(100)"),
+        ]
+        existing_notif_cols = {
+            row[0].lower()
+            for row in conn.execute(
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = 'notifications';")
+            )
+        }
+        for col_name, col_type in notification_columns_to_add:
+            if col_name.lower() not in existing_notif_cols:
+                try:
+                    conn.execute(
+                        text(f"ALTER TABLE notifications ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+                    )
+                    logger.info(f"Column verified or added: notifications.{col_name}")
+                except Exception as e:
+                    logger.warning(f"Note on adding notification column {col_name}: {e}")
+
+        # 5. Create indexes safely
         indexes_to_add = [
             "CREATE INDEX IF NOT EXISTS ix_reports_citizen_id ON reports (citizen_id);",
             "CREATE INDEX IF NOT EXISTS ix_reports_status ON reports (status);",
@@ -207,6 +281,9 @@ def run_migrations():
             "CREATE INDEX IF NOT EXISTS ix_reports_ai_partner_matching_status ON reports (ai_partner_matching_status);",
             "CREATE INDEX IF NOT EXISTS ix_reports_ai_rematching_status ON reports (ai_rematching_status);",
             "CREATE INDEX IF NOT EXISTS ix_reports_ai_project_analytics_status ON reports (ai_project_analytics_status);",
+            "CREATE INDEX IF NOT EXISTS ix_reports_is_active ON reports (is_active);",
+            "CREATE INDEX IF NOT EXISTS ix_notifications_event_key ON notifications (event_key);",
+            "CREATE INDEX IF NOT EXISTS ix_notifications_related_entity_id ON notifications (related_entity_id);",
         ]
 
         for idx_sql in indexes_to_add:
@@ -217,7 +294,7 @@ def run_migrations():
 
     logger.info("Schema migrations completed successfully.")
 
-    # 4. Seed demo users & backfill status history using Session
+    # 5. Seed demo users & backfill status history using Session
     db = SessionLocal()
     try:
         # Seed users
@@ -230,11 +307,34 @@ def run_migrations():
                     password_hash=hash_password(u["password"]),
                     role=u["role"],
                     organization_name=u["organization_name"],
+                    department=u.get("department"),
+                    designation=u.get("designation"),
+                    office_location=u.get("office_location"),
                     phone=u["phone"],
                     is_active=True,
                 )
                 db.add(new_user)
                 logger.info(f"Seeded user: {u['email']} ({u['role']})")
+            else:
+                # Backfill department, designation, office_location if missing
+                changed = False
+                if not existing.department and u.get("department"):
+                    existing.department = u["department"]
+                    changed = True
+                if not existing.designation and u.get("designation"):
+                    existing.designation = u["designation"]
+                    changed = True
+                if not existing.office_location and u.get("office_location"):
+                    existing.office_location = u["office_location"]
+                    changed = True
+                if not existing.phone and u.get("phone"):
+                    existing.phone = u["phone"]
+                    changed = True
+                if not existing.organization_name and u.get("organization_name"):
+                    existing.organization_name = u["organization_name"]
+                    changed = True
+                if changed:
+                    logger.info(f"Updated profile fields for existing demo user: {u['email']}")
         db.commit()
 
         # Seed initial status history for reports that don't have any
@@ -276,6 +376,101 @@ def run_migrations():
             ]
             db.add_all(sample_announcements)
             logger.info("Seeded initial announcements.")
+
+        # Seed initial authentic Government alerts with idempotency (keyed by event_key)
+        sample_gov_alerts = [
+            {
+                "event_key": "alert_high_priority_IF-JH-2026-0002",
+                "role": "government",
+                "type": "high_priority_problem",
+                "title": "High-Priority Problem Awaiting Review",
+                "message": "Contaminated Handpump Water Supply in Doranda Ward 4 requires immediate departmental verification and resource allocation.",
+                "related_track_id": "IF-JH-2026-0002",
+                "related_entity_id": "IF-JH-2026-0002",
+                "priority": "Critical",
+                "action_url": "/government/problems/IF-JH-2026-0002/review",
+                "is_read": False,
+            },
+            {
+                "event_key": "alert_high_priority_IF-JH-2026-0009",
+                "role": "government",
+                "type": "high_priority_problem",
+                "title": "Critical Public Safety Hazard Logged",
+                "message": "Open high voltage electrical wire sparking creating immediate danger near Ranchi residential corridor.",
+                "related_track_id": "IF-JH-2026-0009",
+                "related_entity_id": "IF-JH-2026-0009",
+                "priority": "Critical",
+                "action_url": "/government/problems/IF-JH-2026-0009/review",
+                "is_read": False,
+            },
+            {
+                "event_key": "alert_duplicate_detected_IF-JH-2026-0008",
+                "role": "government",
+                "type": "duplicate_detected",
+                "title": "Duplicate Analysis Requires Attention",
+                "message": "AI detected semantic similarity between pedestrian footbridge damage reports in Ranchi cluster.",
+                "related_track_id": "IF-JH-2026-0008",
+                "related_entity_id": "IF-JH-2026-0008",
+                "priority": "Important",
+                "action_url": "/government/duplicate-analysis",
+                "is_read": False,
+            },
+            {
+                "event_key": "alert_verification_pending_IF-JH-2026-0045",
+                "role": "government",
+                "type": "verification_pending",
+                "title": "Drainage Infrastructure Verification Pending",
+                "message": "Blocked storm drain near Kutchery Road is queued for on-ground municipal verification.",
+                "related_track_id": "IF-JH-2026-0045",
+                "related_entity_id": "IF-JH-2026-0045",
+                "priority": "Normal",
+                "action_url": "/government/problems/IF-JH-2026-0045/review",
+                "is_read": False,
+            },
+            {
+                "event_key": "alert_project_assigned_IF-JH-2026-0135",
+                "role": "government",
+                "type": "project_assigned",
+                "title": "University Project Matching Recommended",
+                "message": "Crop disease early detection challenge matched with BIT Mesra Agri-Tech research laboratory.",
+                "related_track_id": "IF-JH-2026-0135",
+                "related_entity_id": "IF-JH-2026-0135",
+                "priority": "Normal",
+                "action_url": "/government/hei-matching",
+                "is_read": True,
+            },
+            {
+                "event_key": "alert_milestone_IF-JH-2026-0423",
+                "role": "government",
+                "type": "milestone_approaching",
+                "title": "Local Language Learning Pilot Milestone Approaching",
+                "message": "Education department language curriculum pilot is approaching its Stage 2 review milestone.",
+                "related_track_id": "IF-JH-2026-0423",
+                "related_entity_id": "IF-JH-2026-0423",
+                "priority": "Normal",
+                "action_url": "/government/projects",
+                "is_read": True,
+            },
+        ]
+
+        for ga in sample_gov_alerts:
+            existing_alert = db.query(Notification).filter(Notification.event_key == ga["event_key"]).first()
+            if not existing_alert:
+                new_alert = Notification(
+                    event_key=ga["event_key"],
+                    role=ga["role"],
+                    type=ga["type"],
+                    title=ga["title"],
+                    message=ga["message"],
+                    related_track_id=ga.get("related_track_id"),
+                    related_entity_id=ga.get("related_entity_id"),
+                    priority=ga["priority"],
+                    action_url=ga.get("action_url"),
+                    is_read=ga["is_read"],
+                    is_dismissed=False,
+                )
+                db.add(new_alert)
+        db.commit()
 
         # Seed initial demo HEI profiles if none exist
         hei_count = db.query(HEIProfile).count()
@@ -562,6 +757,10 @@ def run_migrations():
 
         db.commit()
         logger.info("All demo data seeded and verified.")
+
+        # Ensure exactly 10 unique problems are active across all prototype portals
+        from app.db.activate_ten_reports import activate_ten_reports
+        activate_ten_reports()
     except Exception as e:
         db.rollback()
         logger.error(f"Error during data seeding: {e}")

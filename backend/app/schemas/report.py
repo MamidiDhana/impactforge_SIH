@@ -83,6 +83,8 @@ class ReportBase(BaseModel):
     latitude: Optional[float] = Field(None, description="GPS Latitude coordinate")
     longitude: Optional[float] = Field(None, description="GPS Longitude coordinate")
     priority: Optional[str] = Field(default=None, description="Priority level (Low, Medium, High, Critical) - optional, determined by AI if omitted")
+    affected_people: Optional[int] = Field(default=0, ge=0, description="Estimated number of affected citizens")
+    citizen_name: Optional[str] = Field(default=None, max_length=255, description="Full name of citizen submitter")
 
 
 class ReportCreate(ReportBase):
@@ -106,6 +108,12 @@ class ReportCreate(ReportBase):
             # priority <- urgency
             if "priority" not in data and "urgency" in data:
                 data["priority"] = data["urgency"]
+            # affected_people <- affectedPeople
+            if "affected_people" not in data and "affectedPeople" in data:
+                data["affected_people"] = data["affectedPeople"]
+            # citizen_name <- citizenName
+            if "citizen_name" not in data and "citizenName" in data:
+                data["citizen_name"] = data["citizenName"]
         return data
 
     @field_validator("state")
@@ -201,6 +209,9 @@ class ReportResponse(BaseModel):
     priority: str
     status: str
     verification_status: Optional[str] = "Pending Verification"
+    is_active: Optional[bool] = True
+    affected_people: Optional[int] = 0
+    citizen_name: Optional[str] = None
     citizen_id: Optional[int] = None
     assigned_to: Optional[str] = None
     assigned_role: Optional[str] = None

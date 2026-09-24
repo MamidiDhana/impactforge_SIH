@@ -1,4 +1,4 @@
-import { Bell, CheckCircle2, Compass, FilePlus2, HelpCircle, MessageSquare, Search, ShieldCheck } from 'lucide-react'
+import { Bell, CheckCircle2, Compass, FilePlus2, MessageSquare, Search, ShieldCheck } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { CitizenLayout } from '../../layouts/CitizenLayout'
 import { PageHeader } from '../../components/common/PageHeader'
@@ -195,18 +195,6 @@ export function CitizenDashboardPage() {
             </div>
           </section>
         </div>
-
-        <section className="flex gap-4 rounded-xl border border-[#b8dfe0] bg-[#e8f5f5] p-5">
-          <HelpCircle className="shrink-0 text-[#187e8d]" />
-          <div>
-            <h2 className="font-[Manrope] font-bold text-[#13243b]">
-              Jharkhand Citizen Problem Reporting Guidelines
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-slate-600">
-              Only challenges located within Jharkhand's 24 districts are eligible. Specify the district, village, and landmark. Your permanent Track ID connects directly to the state's academic and CSR partners.
-            </p>
-          </div>
-        </section>
       </PageContainer>
     </CitizenLayout>
   )

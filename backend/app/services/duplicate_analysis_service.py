@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.report import Report
+from app.models.report_status_history import ReportStatusHistory
 from app.models.audit_log import AuditLog
 from app.models.user import User
 from app.schemas.duplicate_schema import (
@@ -256,7 +257,46 @@ def apply_official_duplicate_review(
             "official_review": review_record,
         })
 
-    # Update report fields without mutating official status/priority
+    # Handle Status Transitions and Routing Constraints
+    prev_status = report.status
+    if review_req.decision == "confirm_duplicate":
+        report.status = "Duplicate"
+        report.verification_status = "Duplicate"
+        report.routing_target = None  # Prevent independent university or industry workflow dispatch
+        if review_req.official_remarks:
+            report.official_remarks = review_req.official_remarks.strip()
+            report.remarks_updated_by = reviewer.email
+            report.remarks_updated_at = review_timestamp
+
+        if prev_status != "Duplicate":
+            status_hist = ReportStatusHistory(
+                report_id=report.id,
+                previous_status=prev_status,
+                new_status="Duplicate",
+                changed_by=reviewer.email,
+                remarks=f"Official duplicate review (Linked to canonical): Linked to canonical problem {review_req.candidate_track_id}. {review_req.official_remarks}".strip(),
+            )
+            db.add(status_hist)
+
+    elif review_req.decision == "not_duplicate":
+        report.status = "Open"
+        report.verification_status = "Pending Verification"
+        if review_req.official_remarks:
+            report.official_remarks = review_req.official_remarks.strip()
+            report.remarks_updated_by = reviewer.email
+            report.remarks_updated_at = review_timestamp
+
+        if prev_status != "Open":
+            status_hist = ReportStatusHistory(
+                report_id=report.id,
+                previous_status=prev_status,
+                new_status="Open",
+                changed_by=reviewer.email,
+                remarks=f"Official duplicate review (kept as separate problem): Unlinked from {review_req.candidate_track_id}. {review_req.official_remarks}".strip(),
+            )
+            db.add(status_hist)
+
+    # Update report metadata
     report.ai_duplicate_candidates = candidates
     report.ai_duplicate_status = "reviewed"
     report.ai_duplicate_analyzed_at = review_timestamp

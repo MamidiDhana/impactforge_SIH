@@ -19,7 +19,6 @@ import { EmptyState } from '../../components/common/EmptyState'
 import { LoadingState } from '../../components/common/LoadingState'
 import { GovernmentReportFilters } from '../../components/government/GovernmentReportFilters'
 import { GovernmentReportsTable } from '../../components/government/GovernmentReportsTable'
-import { GovernmentReportDetailsModal } from '../../components/government/GovernmentReportDetailsModal'
 import { AnnouncementBanner } from '../../components/notifications/AnnouncementBanner'
 import {
   getReports,
@@ -32,7 +31,6 @@ export function GovernmentDashboardPage() {
   const [reports, setReports] = useState<BackendReportResponse[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [fetchError, setFetchError] = useState<string | null>(null)
-  const [selectedReport, setSelectedReport] = useState<BackendReportResponse | null>(null)
 
   // Status update states
   const [isUpdatingTrackId, setIsUpdatingTrackId] = useState<string | null>(null)
@@ -83,11 +81,6 @@ export function GovernmentDashboardPage() {
       setReports((prev) =>
         prev.map((r) => (r.track_id === trackId ? { ...r, ...updated, status: newStatus } : r))
       )
-
-      // If details modal is open for this report, update its state too
-      if (selectedReport && selectedReport.track_id === trackId) {
-        setSelectedReport((prev) => (prev ? { ...prev, ...updated, status: newStatus } : null))
-      }
 
       setSuccessMessage(`Status for ${trackId} updated to "${newStatus}" successfully.`)
       setTimeout(() => setSuccessMessage(null), 4000)
@@ -352,23 +345,12 @@ export function GovernmentDashboardPage() {
             ) : (
               <GovernmentReportsTable
                 reports={filteredReports}
-                onViewDetails={(report) => setSelectedReport(report)}
                 onUpdateStatus={handleUpdateStatus}
                 isUpdatingTrackId={isUpdatingTrackId}
               />
             )}
           </section>
         </div>
-
-        {/* View Details and Status Update Modal */}
-        {selectedReport && (
-          <GovernmentReportDetailsModal
-            report={selectedReport}
-            onClose={() => setSelectedReport(null)}
-            onUpdateStatus={handleUpdateStatus}
-            isUpdatingStatus={isUpdatingTrackId === selectedReport.track_id}
-          />
-        )}
       </GovPage>
     </GovernmentLayout>
   )

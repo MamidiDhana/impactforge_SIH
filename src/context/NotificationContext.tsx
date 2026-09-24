@@ -21,6 +21,13 @@ import {
   loadFromLocalStorage,
   saveToLocalStorage,
 } from '../utils/notificationUtils'
+import {
+  fetchAlerts,
+  fetchUnreadAlertsCount,
+  markAlertAsRead as markBackendAlertRead,
+  markAllAlertsAsRead as markBackendAllRead,
+  dismissAlert as dismissBackendAlert,
+} from '../services/alertService'
 
 export interface CreateNotificationInput {
   type: Notification['type']
@@ -40,93 +47,35 @@ interface NotificationContextValue {
   unreadCount: number
   preferences: NotificationPreferencesData
   notify: (input: CreateNotificationInput) => void
-  markAsRead: (id: string) => void
-  markAllAsRead: () => void
-  dismissNotification: (id: string) => void
+  markAsRead: (id: string) => Promise<void>
+  markAllAsRead: () => Promise<void>
+  dismissNotification: (id: string) => Promise<void>
   dismissAnnouncement: (id: string) => void
   updatePreferences: (partial: Partial<NotificationPreferencesData>) => void
   clearAll: () => void
+  refreshAlerts: () => Promise<void>
 }
 
 const NotificationContext = createContext<NotificationContextValue | undefined>(undefined)
-
-// Initial default seed notifications reflecting real project reports
-const INITIAL_SEED_NOTIFICATIONS: Notification[] = [
-  {
-    id: 'notif-seed-001',
-    type: 'report_submitted',
-    title: 'New Citizen Problem Logged',
-    message: 'Water pipeline leak in Doranda, Ranchi registered in state registry.',
-    targetRole: ['government', 'admin'],
-    relatedTrackId: 'IF-JH-2026-0004',
-    createdAt: new Date(Date.now() - 3600000).toISOString(),
-    read: false,
-    dismissed: false,
-    priority: 'Normal',
-    source: 'Citizen Portal',
-    actionUrl: '/citizen/problems/IF-JH-2026-0004',
-  },
-  {
-    id: 'notif-seed-002',
-    type: 'status_changed',
-    title: 'Report Moved to In Progress',
-    message: 'Track ID IF-JH-2026-0001 status changed to "In Progress" with municipal team assigned.',
-    targetRole: ['citizen', 'government', 'hei', 'faculty', 'partner', 'admin'],
-    relatedTrackId: 'IF-JH-2026-0001',
-    createdAt: new Date(Date.now() - 7200000).toISOString(),
-    read: false,
-    dismissed: false,
-    priority: 'Important',
-    source: 'Government Validator',
-    actionUrl: '/citizen/problems/IF-JH-2026-0001',
-  },
-  {
-    id: 'notif-seed-003',
-    type: 'assignment_updated',
-    title: 'University Challenge Recommendation',
-    message: 'Rural drinking water filtration challenge recommended for student pilot development.',
-    targetRole: ['hei', 'faculty'],
-    relatedTrackId: 'IF-JH-2026-0002',
-    createdAt: new Date(Date.now() - 14400000).toISOString(),
-    read: false,
-    dismissed: false,
-    priority: 'Normal',
-    source: 'HEI Coordination',
-    actionUrl: '/hei/dashboard',
-  },
-  {
-    id: 'notif-seed-004',
-    type: 'project_updated',
-    title: 'CSR Support Opportunity',
-    message: 'High urgency community challenge available for technical and resource sponsorship.',
-    targetRole: ['partner'],
-    relatedTrackId: 'IF-JH-2026-0003',
-    createdAt: new Date(Date.now() - 28800000).toISOString(),
-    read: false,
-    dismissed: false,
-    priority: 'Important',
-    source: 'Partner Network',
-    actionUrl: '/partner/dashboard',
-  },
-]
 
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const { currentUser } = useAuth()
   const { announcements } = useAdmin()
 
   // Centralized notifications state
-  const [notifications, setNotifications] = useState<Notification[]>(() => {
-    const loaded = loadFromLocalStorage<Notification[]>(NOTIFICATIONS_STORAGE_KEY, [])
-    if (loaded.length === 0) {
-      saveToLocalStorage(NOTIFICATIONS_STORAGE_KEY, INITIAL_SEED_NOTIFICATIONS)
-      return INITIAL_SEED_NOTIFICATIONS
-    }
-    return loaded
-  })
+  const [notifications, setNotifications] = useState<Notification[]>(() =>
+    loadFromLocalStorage<Notification[]>(NOTIFICATIONS_STORAGE_KEY, [])
+  )
+
+  // Live backend unread count
+  const [liveUnreadCount, setLiveUnreadCount] = useState<number>(0)
 
   // Notification preferences
   const [preferences, setPreferences] = useState<NotificationPreferencesData>(() =>
-    loadFromLocalStorage<NotificationPreferencesData>(PREFERENCES_STORAGE_KEY, DEFAULT_NOTIFICATION_PREFERENCES)
+    loadFromLocalStorage<NotificationPreferencesData>(
+      PREFERENCES_STORAGE_KEY,
+      DEFAULT_NOTIFICATION_PREFERENCES
+    )
   )
 
   // Dismissed announcement IDs
@@ -149,10 +98,54 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     saveToLocalStorage(DISMISSED_ANNOUNCEMENTS_KEY, dismissedAnnouncementIds)
   }, [dismissedAnnouncementIds])
 
-  // Create a new notification with duplicate prevention
+  // Fetch live notifications and unread count from backend
+  const refreshAlerts = useCallback(async () => {
+    if (!currentUser) return
+    try {
+      const [liveAlerts, count] = await Promise.all([
+        fetchAlerts({ limit: 100 }),
+        fetchUnreadAlertsCount(),
+      ])
+
+      setLiveUnreadCount(count)
+
+      if (liveAlerts.length > 0) {
+        const mapped: Notification[] = liveAlerts.map((a) => ({
+          id: String(a.id),
+          type: (a.type as Notification['type']) || 'system',
+          title: a.title,
+          message: a.message,
+          targetRole: (a.role as Notification['targetRole']) || 'government',
+          relatedTrackId: a.relatedTrackId || undefined,
+          createdAt: a.createdAt,
+          read: a.isRead,
+          dismissed: a.isDismissed,
+          priority: (a.priority as Notification['priority']) || 'Normal',
+          source: (a.role === 'government' ? 'Government Validator' : 'System') as Notification['source'],
+          actionUrl: a.actionUrl || undefined,
+        }))
+        setNotifications(mapped)
+      }
+    } catch {
+      // Backend unavailable; keep cached state
+    }
+  }, [currentUser])
+
+  // Initial load and periodic safe polling
+  useEffect(() => {
+    refreshAlerts()
+
+    // Poll every 25 seconds when user is active
+    const interval = setInterval(() => {
+      refreshAlerts()
+    }, 25000)
+
+    return () => clearInterval(interval)
+  }, [refreshAlerts])
+
+  // Create a new notification
   const notify = useCallback((input: CreateNotificationInput) => {
     setNotifications((prev) => {
-      // Check for duplicate recent notification for the same event & trackId
       if (input.relatedTrackId) {
         const isDuplicate = prev.some(
           (n) =>
@@ -182,28 +175,54 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  // Mark single notification as read
-  const markAsRead = useCallback((id: string) => {
+  // Mark single notification as read in backend & state
+  const markAsRead = useCallback(async (id: string) => {
+    // Optimistic local update
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     )
+    setLiveUnreadCount((prev) => Math.max(0, prev - 1))
+
+    const numId = parseInt(id, 10)
+    if (!isNaN(numId)) {
+      try {
+        await markBackendAlertRead(numId)
+      } catch {
+        // ignore
+      }
+    }
   }, [])
 
-  // Mark all visible notifications for user as read
-  const markAllAsRead = useCallback(() => {
+  // Mark all visible notifications for user as read in backend & state
+  const markAllAsRead = useCallback(async () => {
     const userRole = currentUser?.role
     setNotifications((prev) => {
       const visible = filterNotificationsByRole(prev, userRole, preferences)
       const visibleIds = new Set(visible.map((v) => v.id))
       return prev.map((n) => (visibleIds.has(n.id) ? { ...n, read: true } : n))
     })
+    setLiveUnreadCount(0)
+
+    try {
+      await markBackendAllRead()
+    } catch {
+      // ignore
+    }
   }, [currentUser?.role, preferences])
 
-  // Dismiss single notification
-  const dismissNotification = useCallback((id: string) => {
+  // Dismiss single notification in backend & state
+  const dismissNotification = useCallback(async (id: string) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, dismissed: true } : n))
     )
+    const numId = parseInt(id, 10)
+    if (!isNaN(numId)) {
+      try {
+        await dismissBackendAlert(numId)
+      } catch {
+        // ignore
+      }
+    }
   }, [])
 
   // Dismiss an announcement
@@ -232,7 +251,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     [notifications, currentUser?.role, preferences]
   )
 
-  // Role-filtered announcements (reusing AdminContext announcements and localStorage key)
+  // Role-filtered announcements
   const userAnnouncements = useMemo(
     () =>
       filterAnnouncementsByRole(
@@ -244,11 +263,11 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     [announcements, currentUser?.role, dismissedAnnouncementIds, preferences]
   )
 
-  // Live unread badge count
-  const unreadCount = useMemo(
-    () => userNotifications.filter((n) => !n.read).length,
-    [userNotifications]
-  )
+  // Live unread badge count (matches backend or computed)
+  const unreadCount = useMemo(() => {
+    const localUnread = userNotifications.filter((n) => !n.read).length
+    return Math.max(localUnread, liveUnreadCount)
+  }, [userNotifications, liveUnreadCount])
 
   const value = useMemo(
     () => ({
@@ -264,6 +283,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       dismissAnnouncement,
       updatePreferences,
       clearAll,
+      refreshAlerts,
     }),
     [
       notifications,
@@ -278,6 +298,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       dismissAnnouncement,
       updatePreferences,
       clearAll,
+      refreshAlerts,
     ]
   )
 
@@ -288,6 +309,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useNotifications() {
   const context = useContext(NotificationContext)
   if (!context) {

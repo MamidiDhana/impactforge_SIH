@@ -35,7 +35,7 @@ export function DashboardTopbar({
   breadcrumbs: _breadcrumbs,
   user,
   onMenuClick,
-  onNotificationsClick: _onNotificationsClick,
+  onNotificationsClick,
   notificationCount: _notificationCount,
   onProfile,
   onLogout,
@@ -67,7 +67,7 @@ export function DashboardTopbar({
       <div className="flex items-center gap-2.5">
         {search && <div className="hidden w-52 md:block">{search}</div>}
         {actions && <div className="flex items-center gap-2">{actions}</div>}
-        <NotificationBell />
+        <NotificationBell onClick={onNotificationsClick} />
         {user && <UserMenu user={user} onProfile={onProfile} onLogout={onLogout} />}
       </div>
     </header>

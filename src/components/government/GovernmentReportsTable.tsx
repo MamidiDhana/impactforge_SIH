@@ -1,10 +1,9 @@
-import { Eye, MapPin, Calendar } from 'lucide-react'
+import { MapPin, Calendar } from 'lucide-react'
 import type { BackendReportResponse } from '../../services/reportService'
 import { StatusBadge } from '../common/StatusBadge'
 
 interface GovernmentReportsTableProps {
   reports: BackendReportResponse[]
-  onViewDetails: (report: BackendReportResponse) => void
   onUpdateStatus: (trackId: string, newStatus: 'Open' | 'In Progress' | 'Resolved' | 'Rejected') => Promise<void>
   isUpdatingTrackId?: string | null
 }
@@ -18,7 +17,6 @@ const ALLOWED_STATUSES: Array<'Open' | 'In Progress' | 'Resolved' | 'Rejected'> 
 
 export function GovernmentReportsTable({
   reports,
-  onViewDetails,
   onUpdateStatus,
   isUpdatingTrackId,
 }: GovernmentReportsTableProps) {
@@ -69,7 +67,6 @@ export function GovernmentReportsTable({
                 <th className="px-5 py-3.5">Urgency</th>
                 <th className="px-5 py-3.5">Status</th>
                 <th className="px-5 py-3.5">Created Date</th>
-                <th className="px-5 py-3.5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -152,18 +149,6 @@ export function GovernmentReportsTable({
                     <td className="whitespace-nowrap px-5 py-4 text-xs text-slate-500">
                       {formatDate(report.created_at)}
                     </td>
-
-                    {/* Action */}
-                    <td className="whitespace-nowrap px-5 py-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => onViewDetails(report)}
-                        className="inline-flex items-center gap-1 rounded-lg bg-[#12365a] px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-[#1a4a7a] active:scale-95"
-                      >
-                        <Eye size={13} />
-                        <span>View Details</span>
-                      </button>
-                    </td>
                   </tr>
                 )
               })}
@@ -224,36 +209,25 @@ export function GovernmentReportsTable({
               </div>
 
               {/* Actions & Status Dropdown */}
-              <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-bold text-slate-400">Status:</span>
-                  <select
-                    value={report.status}
-                    disabled={isUpdating}
-                    onChange={(e) =>
-                      onUpdateStatus(
-                        report.track_id,
-                        e.target.value as 'Open' | 'In Progress' | 'Resolved' | 'Rejected'
-                      )
-                    }
-                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
-                  >
-                    {ALLOWED_STATUSES.map((st) => (
-                      <option key={st} value={st}>
-                        {st}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => onViewDetails(report)}
-                  className="inline-flex items-center gap-1 rounded-lg bg-[#12365a] px-3 py-1.5 text-xs font-bold text-white shadow-sm"
+              <div className="flex items-center gap-1.5 pt-2 border-t border-slate-100">
+                <span className="text-[11px] font-bold text-slate-400">Status:</span>
+                <select
+                  value={report.status}
+                  disabled={isUpdating}
+                  onChange={(e) =>
+                    onUpdateStatus(
+                      report.track_id,
+                      e.target.value as 'Open' | 'In Progress' | 'Resolved' | 'Rejected'
+                    )
+                  }
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
                 >
-                  <Eye size={13} />
-                  <span>View Details</span>
-                </button>
+                  {ALLOWED_STATUSES.map((st) => (
+                    <option key={st} value={st}>
+                      {st}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
           )

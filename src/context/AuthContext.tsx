@@ -38,6 +38,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               email: authData.user.email,
               role: authData.user.role as UserRole,
               organization: authData.user.organization_name || demoOrganizations[role],
+              department: authData.user.department || undefined,
+              designation: authData.user.designation || undefined,
+              phone: authData.user.phone || undefined,
+              officeLocation: authData.user.office_location || undefined,
+              avatar: authData.user.avatar_url || undefined,
+              avatarUrl: authData.user.avatar_url || undefined,
               isVerified: true,
             }
           : makeUser({ name: demoNames[role], email, role })
@@ -61,7 +67,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCurrentUser(null)
   }
   const register = async (input: RegisterInput) => makeUser(input)
-  const updateUser = (updates: Partial<User>) => setCurrentUser((user) => user ? { ...user, ...updates } : user)
+  const updateUser = (updates: Partial<User>) =>
+    setCurrentUser((user) => {
+      if (!user) return user
+      const updated = { ...user, ...updates }
+      const isRemembered = Boolean(localStorage.getItem(SESSION_KEY))
+      const storage = isRemembered ? localStorage : sessionStorage
+      storage.setItem(SESSION_KEY, JSON.stringify(updated))
+      return updated
+    })
   return <AuthContext.Provider value={{ isAuthenticated: Boolean(currentUser), isInitialized, currentUser, selectedRole: currentUser?.role ?? null, login, logout, register, updateUser }}>{children}</AuthContext.Provider>
 }
 

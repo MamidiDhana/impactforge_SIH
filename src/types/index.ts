@@ -1,10 +1,10 @@
 import type { LucideIcon } from 'lucide-react'
 
 export type UserRole = 'citizen' | 'government' | 'hei' | 'faculty' | 'partner' | 'admin'
-export type ProblemStatus = 'Pending' | 'Under Review' | 'Validated' | 'Rejected' | 'In Progress' | 'Completed' | 'Cancelled' | 'Open' | 'Resolved'
+export type ProblemStatus = 'Pending' | 'Under Review' | 'Validated' | 'Rejected' | 'In Progress' | 'Completed' | 'Cancelled' | 'Open' | 'Resolved' | 'Duplicate' | 'Merged'
 export type ProjectStatus = 'Draft' | 'Active' | 'Completed' | 'Cancelled'
-export type CitizenProblemStatus = 'Draft' | 'Submitted' | 'Under Review' | 'More Information Required' | 'Validated' | 'Rejected' | 'Redirected' | 'Converted to Project' | 'Open' | 'In Progress' | 'Resolved'
-export type ValidationStatus = 'Submitted' | 'Under Review' | 'More Information Required' | 'Validated' | 'Rejected' | 'Redirected' | 'Converted to Project'
+export type CitizenProblemStatus = 'Draft' | 'Submitted' | 'Under Review' | 'More Information Required' | 'Validated' | 'Rejected' | 'Redirected' | 'Converted to Project' | 'Open' | 'In Progress' | 'Resolved' | 'Duplicate' | 'Merged'
+export type ValidationStatus = 'Submitted' | 'Under Review' | 'More Information Required' | 'Validated' | 'Rejected' | 'Redirected' | 'Converted to Project' | 'Duplicate' | 'Merged'
 
 export interface User {
   id: string
@@ -13,7 +13,44 @@ export interface User {
   role: UserRole
   organization: string
   avatar?: string
+  avatarUrl?: string
   isVerified: boolean
+  department?: string
+  designation?: string
+  phone?: string
+  officeLocation?: string
+}
+
+export interface UserProfileResponse {
+  id: number
+  full_name: string
+  email: string
+  role: string
+  organization_name?: string | null
+  department?: string | null
+  designation?: string | null
+  phone?: string | null
+  office_location?: string | null
+  avatar_url?: string | null
+  is_active: boolean
+  created_at: string
+  updated_at?: string | null
+}
+
+export interface ProfileUpdatePayload {
+  full_name?: string
+  department?: string
+  designation?: string
+  phone?: string
+  office_location?: string
+  organization_name?: string
+  avatar_url?: string
+}
+
+export interface ChangePasswordPayload {
+  current_password: string
+  new_password: string
+  confirm_password: string
 }
 
 export interface Organization { id: string; name: string; type: string; logoUrl?: string }
@@ -71,6 +108,7 @@ export interface AIPreScreeningInfo {
 export interface CitizenProblem extends Omit<Problem, 'status'> {
   trackId?: string
   citizenId?: string
+  citizenName?: string | null
   status: CitizenProblemStatus
   urgency: 'Low' | 'Medium' | 'High' | 'Critical'
   affectedPeople: number
@@ -286,13 +324,53 @@ export interface Notification {
   id: string
   title: string
   description?: string
-  type?: 'status' | 'request' | 'project' | 'system'
+  message?: string
+  type?: string
   read: boolean
   createdAt: string
   trackId?: string
   problemTitle?: string
   status?: string
   actionUrl?: string
+  priority?: string
+  readAt?: string
+  relatedTrackId?: string
+}
+
+export interface BackendAlertResponse {
+  id: number
+  user_id?: number | null
+  role?: string | null
+  type: string
+  title: string
+  message: string
+  related_track_id?: string | null
+  related_entity_id?: string | null
+  action_url?: string | null
+  priority: string
+  is_read: boolean
+  read_at?: string | null
+  is_dismissed: boolean
+  event_key?: string | null
+  created_at: string
+}
+
+export interface AlertItem {
+  id: number
+  userId?: number | null
+  role?: string | null
+  type: string
+  title: string
+  message: string
+  relatedTrackId?: string | null
+  relatedEntityId?: string | null
+  actionUrl?: string | null
+  priority: 'Low' | 'Normal' | 'Important' | 'Critical' | string
+  isRead: boolean
+  readAt?: string | null
+  isDismissed: boolean
+  eventKey?: string | null
+  createdAt: string
 }
 export interface Capability { id: string; name: string; description?: string; icon?: LucideIcon }
 export type ProjectWorkspaceStage = 'Proposal' | 'Team Formation' | 'Development' | 'Prototype' | 'Testing' | 'Pilot' | 'Deployment' | 'Impact Tracking' | 'Completed'

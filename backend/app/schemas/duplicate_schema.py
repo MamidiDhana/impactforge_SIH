@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class OfficialReviewDetail(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    decision: Literal["confirm_duplicate", "not_duplicate", "needs_review"]
+    decision: Literal["confirm_duplicate", "merge_duplicate", "not_duplicate", "needs_review"]
     reviewed_by_id: int
     reviewed_by_email: str
     reviewed_by_role: str

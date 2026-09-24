@@ -10,7 +10,10 @@ class NotificationCreate(BaseModel):
     title: str
     message: str
     related_track_id: Optional[str] = None
+    related_entity_id: Optional[str] = None
+    action_url: Optional[str] = None
     priority: str = Field(default="Normal")
+    event_key: Optional[str] = None
 
 
 class NotificationResponse(BaseModel):
@@ -23,7 +26,15 @@ class NotificationResponse(BaseModel):
     title: str
     message: str
     related_track_id: Optional[str] = None
+    related_entity_id: Optional[str] = None
+    action_url: Optional[str] = None
     priority: str
     is_read: bool
+    read_at: Optional[datetime] = None
     is_dismissed: bool
+    event_key: Optional[str] = None
     created_at: datetime
+
+
+class UnreadCountResponse(BaseModel):
+    unread_count: int

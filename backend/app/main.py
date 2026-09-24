@@ -19,10 +19,12 @@ from app.api.routes import (
     auth_router,
     reports_router,
     notifications_router,
+    alerts_router,
     announcements_router,
     analytics_router,
     audit_logs_router,
     ai_management_router,
+    profile_router,
 )
 
 logger = logging.getLogger("app.main")
@@ -74,8 +76,10 @@ app.add_middleware(
 # Mount all API routers
 app.include_router(health_router, prefix=settings.API_V1_STR, tags=["Health"])
 app.include_router(auth_router, prefix=settings.API_V1_STR)
+app.include_router(profile_router, prefix=settings.API_V1_STR)
 app.include_router(reports_router, prefix=settings.API_V1_STR)
 app.include_router(notifications_router, prefix=settings.API_V1_STR)
+app.include_router(alerts_router, prefix=settings.API_V1_STR)
 app.include_router(announcements_router, prefix=settings.API_V1_STR)
 app.include_router(analytics_router, prefix=settings.API_V1_STR)
 app.include_router(audit_logs_router, prefix=settings.API_V1_STR)

@@ -719,7 +719,7 @@ def get_aggregate_impact_summary(db: Session) -> ImpactSummaryResponse:
     Platform-wide aggregate impact summary computed from database records.
     Never fabricates figures; flags insufficient_data if no records exist.
     """
-    total_reports = db.query(Report).count()
+    total_reports = db.query(Report).filter(Report.is_active == True).count()
     if total_reports == 0:
         return ImpactSummaryResponse(
             total_reports=0,
@@ -734,7 +734,7 @@ def get_aggregate_impact_summary(db: Session) -> ImpactSummaryResponse:
             insufficient_data=True,
         )
 
-    analyzed_reports = db.query(Report).filter(Report.ai_project_analytics_status == "completed").count()
+    analyzed_reports = db.query(Report).filter(Report.is_active == True, Report.ai_project_analytics_status == "completed").count()
     if analyzed_reports == 0:
         return ImpactSummaryResponse(
             total_reports=total_reports,
@@ -750,23 +750,25 @@ def get_aggregate_impact_summary(db: Session) -> ImpactSummaryResponse:
         )
 
     # Compute averages from real numeric columns
-    avg_feasibility = db.query(func.avg(Report.ai_project_feasibility_score)).filter(Report.ai_project_analytics_status == "completed").scalar()
-    avg_impact = db.query(func.avg(Report.ai_project_impact_score)).filter(Report.ai_project_analytics_status == "completed").scalar()
-    avg_readiness = db.query(func.avg(Report.ai_project_readiness_score)).filter(Report.ai_project_analytics_status == "completed").scalar()
-    avg_risk = db.query(func.avg(Report.ai_project_risk_score)).filter(Report.ai_project_analytics_status == "completed").scalar()
+    avg_feasibility = db.query(func.avg(Report.ai_project_feasibility_score)).filter(Report.is_active == True, Report.ai_project_analytics_status == "completed").scalar()
+    avg_impact = db.query(func.avg(Report.ai_project_impact_score)).filter(Report.is_active == True, Report.ai_project_analytics_status == "completed").scalar()
+    avg_readiness = db.query(func.avg(Report.ai_project_readiness_score)).filter(Report.is_active == True, Report.ai_project_analytics_status == "completed").scalar()
+    avg_risk = db.query(func.avg(Report.ai_project_risk_score)).filter(Report.is_active == True, Report.ai_project_analytics_status == "completed").scalar()
 
     high_impact_count = db.query(Report).filter(
+        Report.is_active == True,
         Report.ai_project_analytics_status == "completed",
         Report.ai_project_impact_score >= 70.0
     ).count()
 
     critical_risk_count = db.query(Report).filter(
+        Report.is_active == True,
         Report.ai_project_analytics_status == "completed",
         Report.ai_project_risk_score >= 70.0
     ).count()
 
     # Sum estimated beneficiaries across completed reports
-    completed_reports = db.query(Report).filter(Report.ai_project_analytics_status == "completed").all()
+    completed_reports = db.query(Report).filter(Report.is_active == True, Report.ai_project_analytics_status == "completed").all()
     total_beneficiaries = 0
     for r in completed_reports:
         an = r.ai_project_analytics or {}
@@ -791,11 +793,11 @@ def get_aggregate_impact_trends(db: Session) -> ImpactTrendsResponse:
     """
     Computes time-series impact trends from created_at timestamps.
     """
-    total_reports = db.query(Report).count()
+    total_reports = db.query(Report).filter(Report.is_active == True).count()
     if total_reports == 0:
         return ImpactTrendsResponse(trends=[], insufficient_data=True)
 
-    reports = db.query(Report).order_by(Report.created_at.asc()).all()
+    reports = db.query(Report).filter(Report.is_active == True).order_by(Report.created_at.asc()).all()
     period_map: Dict[str, List[Report]] = {}
     
     for r in reports:
@@ -835,17 +837,17 @@ def get_aggregate_district_impact(db: Session) -> DistrictImpactResponse:
     """
     Aggregates impact and feasibility by Jharkhand district.
     """
-    total_reports = db.query(Report).count()
+    total_reports = db.query(Report).filter(Report.is_active == True).count()
     if total_reports == 0:
         return DistrictImpactResponse(districts=[], insufficient_data=True)
 
-    districts = db.query(Report.district).distinct().all()
+    districts = db.query(Report.district).filter(Report.is_active == True).distinct().all()
     district_items = []
 
     for (d_name,) in districts:
         if not d_name:
             continue
-        d_reports = db.query(Report).filter(Report.district == d_name).all()
+        d_reports = db.query(Report).filter(Report.is_active == True, Report.district == d_name).all()
         count = len(d_reports)
         
         impact_scores = [r.ai_project_impact_score for r in d_reports if r.ai_project_impact_score is not None]
@@ -881,17 +883,17 @@ def get_aggregate_category_impact(db: Session) -> CategoryImpactResponse:
     """
     Aggregates impact and feasibility by problem category.
     """
-    total_reports = db.query(Report).count()
+    total_reports = db.query(Report).filter(Report.is_active == True).count()
     if total_reports == 0:
         return CategoryImpactResponse(categories=[], insufficient_data=True)
 
-    categories = db.query(Report.category).distinct().all()
+    categories = db.query(Report.category).filter(Report.is_active == True).distinct().all()
     category_items = []
 
     for (cat_name,) in categories:
         if not cat_name:
             continue
-        c_reports = db.query(Report).filter(Report.category == cat_name).all()
+        c_reports = db.query(Report).filter(Report.is_active == True, Report.category == cat_name).all()
         count = len(c_reports)
         
         impact_scores = [r.ai_project_impact_score for r in c_reports if r.ai_project_impact_score is not None]
@@ -929,7 +931,7 @@ def get_aggregate_resolution_performance(db: Session) -> ResolutionPerformanceRe
     """
     Calculates resolution duration, rate %, and breakdown across categories and districts.
     """
-    total_reports = db.query(Report).count()
+    total_reports = db.query(Report).filter(Report.is_active == True).count()
     if total_reports == 0:
         return ResolutionPerformanceResponse(
             total_resolved=0,
@@ -940,9 +942,9 @@ def get_aggregate_resolution_performance(db: Session) -> ResolutionPerformanceRe
             insufficient_data=True,
         )
 
-    resolved_reports = db.query(Report).filter(Report.status == "Resolved").all()
+    resolved_reports = db.query(Report).filter(Report.is_active == True, Report.status == "Resolved").all()
     total_resolved = len(resolved_reports)
-    resolution_rate = round((total_resolved / total_reports) * 100.0, 1)
+    resolution_rate = round((total_resolved / total_reports) * 100.0, 1) if total_reports > 0 else 0.0
 
     # Resolution days calculation
     resolution_days_list = []
@@ -958,11 +960,11 @@ def get_aggregate_resolution_performance(db: Session) -> ResolutionPerformanceRe
 
     # Category breakdown
     cat_items = []
-    for (cat_name,) in db.query(Report.category).distinct().all():
+    for (cat_name,) in db.query(Report.category).filter(Report.is_active == True).distinct().all():
         if not cat_name:
             continue
-        c_all = db.query(Report).filter(Report.category == cat_name).count()
-        c_resolved = db.query(Report).filter(Report.category == cat_name, Report.status == "Resolved").all()
+        c_all = db.query(Report).filter(Report.is_active == True, Report.category == cat_name).count()
+        c_resolved = db.query(Report).filter(Report.is_active == True, Report.category == cat_name, Report.status == "Resolved").all()
         c_rate = round((len(c_resolved) / c_all) * 100.0, 1) if c_all > 0 else 0.0
 
         c_days = []
@@ -984,11 +986,11 @@ def get_aggregate_resolution_performance(db: Session) -> ResolutionPerformanceRe
 
     # District breakdown
     dist_items = []
-    for (d_name,) in db.query(Report.district).distinct().all():
+    for (d_name,) in db.query(Report.district).filter(Report.is_active == True).distinct().all():
         if not d_name:
             continue
-        d_all = db.query(Report).filter(Report.district == d_name).count()
-        d_resolved = db.query(Report).filter(Report.district == d_name, Report.status == "Resolved").all()
+        d_all = db.query(Report).filter(Report.is_active == True, Report.district == d_name).count()
+        d_resolved = db.query(Report).filter(Report.is_active == True, Report.district == d_name, Report.status == "Resolved").all()
         d_rate = round((len(d_resolved) / d_all) * 100.0, 1) if d_all > 0 else 0.0
 
         d_days = []

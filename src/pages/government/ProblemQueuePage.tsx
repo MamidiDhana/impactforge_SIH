@@ -52,7 +52,7 @@ export function ProblemQueuePage() {
       const citizenReports = data.filter(isCitizenSubmittedReport)
       setRawReports(citizenReports)
       // Display all live citizen submissions directly in Government Problem Queue
-      const mapped = citizenReports.map(mapBackendReportToGovernmentProblem)
+      const mapped = citizenReports.slice(0, 10).map(mapBackendReportToGovernmentProblem)
       setProblems(mapped)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to connect to backend server.'

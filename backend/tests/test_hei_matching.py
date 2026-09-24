@@ -42,6 +42,12 @@ class TestHEIMatching(unittest.TestCase):
         cls.citizen_user = cls.db.query(User).filter(User.email == "asha.rao@jharkhand.in").first()
         cls.gov_user = cls.db.query(User).filter(User.email == "vikram.singh@jharkhand.gov.in").first()
         cls.hei_user = cls.db.query(User).filter(User.email == "dean.rnd@bitmesra.ac.in").first()
+        cls.db.query(HEIInterest).delete()
+        cls.db.commit()
+
+    def setUp(self):
+        self.db.query(HEIInterest).delete()
+        self.db.commit()
 
     def tearDown(self):
         self.db.rollback()

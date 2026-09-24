@@ -187,3 +187,74 @@ class StudentInterestActionResponse(BaseModel):
         "AI recommendations are advisory only. Student engagement requires "
         "faculty mentorship approval and institutional verification."
     )
+
+
+class FacultyAssignmentItem(BaseModel):
+    """
+    Live assignment representation connecting a problem/project to a faculty member.
+    """
+    id: int
+    track_id: str
+    problem_title: str
+    category: str
+    district: str
+    locality: str
+    location: str
+    affected_people: int = 0
+    priority: str = "Medium"
+    verification_status: str = "Verified"
+    assigned_faculty_id: Optional[str] = None
+    assigned_faculty_name: str
+    faculty_department: str
+    faculty_expertise: List[str] = Field(default_factory=list)
+    faculty_email: Optional[str] = None
+    faculty_institution_id: Optional[str] = None
+    faculty_institution_name: Optional[str] = None
+    assignment_date: Optional[datetime] = None
+    assignment_status: str = "In Progress"
+    current_project_stage: str = "Problem Analysis"
+    overall_progress: int = 45
+    solution_title: Optional[str] = None
+    remarks: Optional[str] = None
+
+
+class FacultyRegistryItem(BaseModel):
+    """
+    Detailed profile item for a registered HEI faculty member.
+    """
+    faculty_id: str
+    name: str
+    institution_id: str
+    institution_name: str
+    department: str
+    designation: Optional[str] = "Associate Professor"
+    skills: List[str] = Field(default_factory=list)
+    technical_domains: List[str] = Field(default_factory=list)
+    research_expertise: List[str] = Field(default_factory=list)
+    project_experience: str = "high"
+    availability: str = "available"
+    current_workload: int = 1
+    district: str = "Ranchi"
+    state: str = "Jharkhand"
+    verification_status: str = "verified"
+    contact_email: Optional[str] = None
+    associated_user_email: Optional[str] = None
+    active_assignments_count: int = 0
+    assigned_problem_track_ids: List[str] = Field(default_factory=list)
+
+
+class FacultyAssignmentAssignRequest(BaseModel):
+    """
+    Payload to assign or reassign a verified problem report to a faculty mentor.
+    """
+    faculty_id: str
+    remarks: Optional[str] = "Assigned via University Faculty Portal"
+    project_stage: Optional[str] = None
+
+
+class FacultyAssignmentActionResponse(BaseModel):
+    status: str = "success"
+    message: str
+    track_id: str
+    assignment: Optional[FacultyAssignmentItem] = None
+

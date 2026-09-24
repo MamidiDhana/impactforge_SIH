@@ -1,3 +1,4 @@
+
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from sqlalchemy import (
@@ -34,6 +35,9 @@ class Report(Base):
     priority: Mapped[str] = mapped_column(String(20), nullable=False, default="Medium")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="Open", index=True)
     verification_status: Mapped[str] = mapped_column(String(30), nullable=False, default="Pending Verification", index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
+    affected_people: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=0)
+    citizen_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     
     # User ownership, assignments, official remarks, and resolution lifecycle
     citizen_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True, index=True)

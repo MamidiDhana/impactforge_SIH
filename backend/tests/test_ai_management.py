@@ -166,6 +166,16 @@ class ImpactForgeAiManagementTestCase(unittest.TestCase):
         self.assertAlmostEqual(updated["similarity_threshold_strong"], 0.76)
         self.assertAlmostEqual(updated["similarity_threshold_duplicate"], 0.86)
 
+        # 3. Restore original settings to prevent polluting subsequent test suites
+        restore_payload = {
+            "similarity_threshold_possible": 0.55,
+            "similarity_threshold_strong": 0.75,
+            "similarity_threshold_duplicate": 0.85,
+            "ai_enabled": True,
+            "embedding_enabled": True,
+        }
+        self.client.put("/api/ai/settings", json=restore_payload, headers=self.admin_headers)
+
 
 if __name__ == "__main__":
     unittest.main()

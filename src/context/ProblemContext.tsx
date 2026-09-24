@@ -128,13 +128,10 @@ export function ProblemProvider({ children }: { children: ReactNode }) {
 
   const dict = useMemo(() => JHARKHAND_LANGUAGES[language].dict, [language])
 
-  // Filter problems for currently logged in citizen
+  // Return all active citizen problems for problem listings and dashboard consistency
   const citizenProblems = useMemo(() => {
-    const currentCitizenId = currentUser?.id || 'mock-citizen'
-    return problems.filter(
-      (p) => !p.citizenId || p.citizenId === currentCitizenId || p.citizenId === 'mock-citizen'
-    )
-  }, [problems, currentUser])
+    return problems
+  }, [problems])
 
   const getProblemByTrackId = (trackId: string) => {
     const normalized = trackId.trim().toUpperCase()
@@ -292,7 +289,7 @@ export function ProblemProvider({ children }: { children: ReactNode }) {
         next[existingIndex] = { ...next[existingIndex], ...problem }
         return next
       }
-      return [problem, ...prev]
+      return [problem, ...prev].slice(0, 10)
     })
   }
 

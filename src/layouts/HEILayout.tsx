@@ -1,10 +1,12 @@
 import { useState, type ReactNode } from 'react'
 import {
-  ClipboardList,
-  FileSearch,
-  FileText,
   LayoutDashboard,
-  Users,
+  Layers,
+  GraduationCap,
+  Building2,
+  Handshake,
+  MessageSquareQuote,
+  UserCheck,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { DashboardSidebar, type NavigationItem } from '../components/navigation/DashboardSidebar'
@@ -24,31 +26,34 @@ const items: NavigationItem[] = [
     icon: LayoutDashboard,
   },
   {
-    label: 'Faculty',
-    href: '/university/faculty',
-    icon: Users,
-    children: [
-      {
-        label: 'Faculty Dashboard',
-        href: '/university/faculty',
-        icon: LayoutDashboard,
-      },
-      {
-        label: 'Problems',
-        href: '/university/problems',
-        icon: FileSearch,
-      },
-      {
-        label: 'Reports',
-        href: '/university/faculty/reports',
-        icon: FileText,
-      },
-    ],
+    label: 'Problem Queue',
+    href: '/university/problem-queue',
+    icon: Layers,
   },
   {
-    label: 'Capability & Resources',
-    href: '/university/reports',
-    icon: ClipboardList,
+    label: 'Faculty Assigned',
+    href: '/university/faculty-assigned',
+    icon: GraduationCap,
+  },
+  {
+    label: 'Resources & Support',
+    href: '/university/resources-support',
+    icon: Building2,
+  },
+  {
+    label: 'Industry / CSR Collaboration',
+    href: '/university/collaborations',
+    icon: Handshake,
+  },
+  {
+    label: 'Government Feedback',
+    href: '/university/feedback',
+    icon: MessageSquareQuote,
+  },
+  {
+    label: 'Profile',
+    href: '/university/profile',
+    icon: UserCheck,
   },
 ]
 
@@ -82,10 +87,10 @@ export function HEILayout({ children, title, breadcrumbs }: HEILayoutProps) {
           title={title}
           breadcrumbs={breadcrumbs}
           user={currentUser}
-          notificationCount={4}
+          notificationCount={3}
           onNotificationsClick={() => navigate('/hei/notifications')}
           onMenuClick={() => setMobileOpen(true)}
-          onProfile={() => navigate('/hei/profile')}
+          onProfile={() => navigate('/university/profile')}
           onLogout={signOut}
         />
         <main>{children}</main>

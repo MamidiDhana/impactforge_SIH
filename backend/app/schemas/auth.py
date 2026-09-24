@@ -54,9 +54,14 @@ class UserResponse(BaseModel):
     email: str
     role: str
     organization_name: Optional[str] = None
+    department: Optional[str] = None
+    designation: Optional[str] = None
     phone: Optional[str] = None
+    office_location: Optional[str] = None
+    avatar_url: Optional[str] = None
     is_active: bool
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
 
 class TokenResponse(BaseModel):

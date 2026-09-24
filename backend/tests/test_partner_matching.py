@@ -309,7 +309,7 @@ class TestPartnerMatching(unittest.TestCase):
         own_report = self.db.query(Report).filter(Report.citizen_id == self.citizen_user.id).first()
         if not own_report:
             own_report = Report(
-                track_id=f"IF-JH-2026-{uuid.uuid4().hex[:4]}",
+                track_id=f"IF-JH-PART-OWN-{uuid.uuid4().hex[:8]}",
                 problem_title="Drinking Water Contamination",
                 category="Water and Sanitation",
                 context_and_desired_outcome="Water has heavy mineral taste.",
@@ -342,7 +342,7 @@ class TestPartnerMatching(unittest.TestCase):
         """Citizen cannot view partner matches for another citizen's report (403)."""
         # Create report owned by other_citizen
         other_report = Report(
-            track_id=f"IF-JH-2026-{uuid.uuid4().hex[:4]}",
+            track_id=f"IF-JH-PART-OTH-{uuid.uuid4().hex[:8]}",
             problem_title="Broken Culvert",
             category="Civil Infrastructure",
             context_and_desired_outcome="Bridge slab broken.",
@@ -390,7 +390,7 @@ class TestPartnerMatching(unittest.TestCase):
     def test_api_hei_connected_report_access(self):
         """HEI users can view partners for connected reports, but receive 403 on unconnected reports."""
         connected_report = Report(
-            track_id=f"IF-JH-2026-{uuid.uuid4().hex[:4]}",
+            track_id=f"IF-JH-PART-CONN-{uuid.uuid4().hex[:8]}",
             problem_title="Connected Water Problem",
             category="Water and Sanitation",
             context_and_desired_outcome="Water test needed.",
@@ -403,7 +403,7 @@ class TestPartnerMatching(unittest.TestCase):
             ai_hei_matches=[{"hei_id": "bit-mesra", "hei_name": "Birla Institute of Technology Mesra"}],
         )
         unconnected_report = Report(
-            track_id=f"IF-JH-2026-{uuid.uuid4().hex[:4]}",
+            track_id=f"IF-JH-PART-UNCONN-{uuid.uuid4().hex[:8]}",
             problem_title="Unconnected Remote Issue",
             category="Rural Housing",
             context_and_desired_outcome="Village housing audit.",

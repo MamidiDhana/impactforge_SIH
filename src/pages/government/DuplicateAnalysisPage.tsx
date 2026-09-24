@@ -15,6 +15,8 @@ import {
   Sparkles,
   MapPin,
   Tag,
+  Link2,
+  ExternalLink,
 } from 'lucide-react'
 import { GovernmentLayout } from '../../layouts/GovernmentLayout'
 import { GovPage } from './GovernmentShared'
@@ -28,6 +30,7 @@ import {
   isCitizenSubmittedReport,
   type BackendReportResponse,
   type DuplicateCandidate,
+  type SimilarProblemMatch,
 } from '../../services/reportService'
 
 export interface LiveDuplicatePair {
@@ -77,7 +80,9 @@ export function DuplicateAnalysisPage() {
   const [minSimilarity, setMinSimilarity] = useState<number>(0)
 
   // Action / Feedback State
-  const [confirmingPair, setConfirmingPair] = useState<LiveDuplicatePair | null>(null)
+  const [confirmingPair, setConfirmingPair] = useState<{
+    pair: LiveDuplicatePair
+  } | null>(null)
   const [officialRemarks, setOfficialRemarks] = useState('')
   const [isSubmittingReview, setIsSubmittingReview] = useState(false)
   const [feedbackMessage, setFeedbackMessage] = useState<{
@@ -89,19 +94,19 @@ export function DuplicateAnalysisPage() {
     setFeedbackMessage({ text, type })
     setTimeout(() => {
       setFeedbackMessage(null)
-    }, 4500)
+    }, 5000)
   }
 
-  // Load real citizen reports from backend database: GET /api/reports
+  // Load real citizen reports dynamically from backend PostgreSQL database
   const loadReportsData = useCallback(async () => {
     setIsLoading(true)
     setFetchError(null)
 
     try {
-      const data = await getReports()
-      // Filter to genuine citizen reports
+      // Fetch up to 100 live reports to ensure all citizen duplicate pairs are aggregated
+      const data = await getReports({ limit: 100 })
       const citizenReports = data.filter(isCitizenSubmittedReport)
-      setReports(citizenReports)
+      setReports(citizenReports.length > 0 ? citizenReports : data)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to connect to backend server.'
       setFetchError(msg)
@@ -119,67 +124,122 @@ export function DuplicateAnalysisPage() {
     const pairs: LiveDuplicatePair[] = []
     const seenPairs = new Set<string>()
 
+    // Lookup map of all reports by track_id
+    const reportMap = new Map<string, BackendReportResponse>()
+    reports.forEach((r) => {
+      if (r.track_id) reportMap.set(r.track_id.trim().toUpperCase(), r)
+    })
+
     for (const report of reports) {
       const cands: DuplicateCandidate[] = report.ai_duplicate_candidates || []
-      for (const cand of cands) {
-        const candTrackId = cand.matching_track_id
-        if (!candTrackId || candTrackId === report.track_id) continue
+      const simMatches: SimilarProblemMatch[] = report.ai_similarity_matches || []
 
-        // Normalize bidirectional pair key to prevent duplicate inverted pairs
+      // Aggregate all candidate targets from both duplicate candidates and similarity matches
+      const targetMatches: Array<{
+        candTrackId: string
+        score: number
+        classification: string
+        reasons: string[]
+        review?: {
+          decision: string
+          reviewed_by_email?: string
+          official_remarks?: string
+          reviewed_at?: string
+        } | null
+      }> = []
+
+      // 1. Process ai_duplicate_candidates
+      cands.forEach((cand) => {
+        const tId = cand.matching_track_id
+        if (tId && tId !== report.track_id) {
+          targetMatches.push({
+            candTrackId: tId,
+            score: typeof cand.similarity_score === 'number' ? cand.similarity_score : 0,
+            classification: cand.duplicate_classification || 'possible_duplicate',
+            reasons: cand.reasons || ['High semantic and geographic overlap'],
+            review: cand.official_review || null,
+          })
+        }
+      })
+
+      // 2. Process ai_similarity_matches (if not already added)
+      simMatches.forEach((match) => {
+        const tId = match.matching_track_id
+        if (tId && tId !== report.track_id && !targetMatches.some((m) => m.candTrackId === tId)) {
+          const score = typeof match.similarity_score === 'number' ? match.similarity_score : 0
+          if (score >= 0.55) {
+            targetMatches.push({
+              candTrackId: tId,
+              score,
+              classification: score >= 0.85 ? 'confirmed_duplicate_candidate' : score >= 0.75 ? 'likely_duplicate' : 'possible_duplicate',
+              reasons: [
+                match.similarity_level ? `AI Similarity Level: ${match.similarity_level}` : 'High semantic match',
+                match.location ? `Matching location: ${match.location}` : '',
+                match.category ? `Category: ${match.category}` : '',
+              ].filter(Boolean),
+              review: null,
+            })
+          }
+        }
+      })
+
+      // Build LiveDuplicatePair records
+      for (const item of targetMatches) {
+        const candTrackId = item.candTrackId
         const pairKey = [report.track_id, candTrackId].sort().join(':::')
         if (seenPairs.has(pairKey)) continue
         seenPairs.add(pairKey)
 
-        const score = typeof cand.similarity_score === 'number' ? cand.similarity_score : 0
+        const candReport = reportMap.get(candTrackId.toUpperCase())
+        const score = item.score
         const percent = Math.round(score * 100)
-        const review = cand.official_review || null
+        const review = item.review
 
-        const isConfirmed =
-          cand.duplicate_classification === 'confirmed_duplicate_candidate' ||
-          review?.decision === 'confirm_duplicate'
-        const isDismissed =
-          cand.duplicate_classification === 'not_duplicate' ||
-          review?.decision === 'not_duplicate'
-        const isPending = !isConfirmed && !isDismissed
+        // Determine human review state
+        // Notice: Human review decisions are "confirm_duplicate", "merge_duplicate", or "not_duplicate"
+        const isHumanConfirmed = Boolean(
+          review?.decision === 'confirm_duplicate' ||
+          review?.decision === 'merge_duplicate' ||
+          report.status === 'Duplicate' ||
+          (candReport && candReport.status === 'Duplicate')
+        )
 
-        // Include candidates that have sufficient similarity or official classification
-        if (
-          cand.duplicate_classification in {
-            confirmed_duplicate_candidate: 1,
-            likely_duplicate: 1,
-            possible_duplicate: 1,
-          } ||
-          score >= 0.55 ||
-          isConfirmed ||
-          isDismissed
-        ) {
-          pairs.push({
-            pairId: `${report.track_id}-${candTrackId}`,
-            sourceTrackId: report.track_id,
-            sourceTitle: report.problem_title,
-            sourceCategory: report.category,
-            sourceLocation: `${report.district}${report.locality ? `, ${report.locality}` : ''}`,
-            sourceDescription: report.context_and_desired_outcome || 'No details provided.',
-            sourceStatus: report.status,
-            sourcePriority: report.priority,
-            sourceDate: report.created_at ? new Date(report.created_at).toLocaleDateString('en-IN') : 'Recent',
-            candidateTrackId: candTrackId,
-            candidateTitle: cand.title || 'Referenced Problem',
-            candidateCategory: cand.category || report.category,
-            candidateLocation: cand.district_location || 'Jharkhand',
-            candidateStatus: cand.current_status || 'Open',
-            candidatePriority: cand.current_priority || 'Medium',
-            candidateDate: cand.created_date || 'Earlier',
-            similarityScore: score,
-            similarityPercent: percent,
-            classification: cand.duplicate_classification,
-            reasons: cand.reasons || ['High semantic text and geographic overlap'],
-            officialReview: review,
-            isConfirmed,
-            isDismissed,
-            isPending,
-          })
-        }
+        const isHumanDismissed = Boolean(review?.decision === 'not_duplicate')
+        const isPending = !isHumanConfirmed && !isHumanDismissed
+
+        const candTitle = candReport?.problem_title || (candReport as any)?.title || `Problem ${candTrackId}`
+        const candCategory = candReport?.category || report.category
+        const candLoc = candReport ? `${candReport.district}${candReport.locality ? `, ${candReport.locality}` : ''}` : 'Jharkhand'
+        const candStatus = candReport?.status || 'Open'
+        const candPriority = candReport?.priority || 'Medium'
+        const candDate = candReport?.created_at ? new Date(candReport.created_at).toLocaleDateString('en-IN') : 'Earlier'
+
+        pairs.push({
+          pairId: `${report.track_id}-${candTrackId}`,
+          sourceTrackId: report.track_id,
+          sourceTitle: report.problem_title,
+          sourceCategory: report.category,
+          sourceLocation: `${report.district}${report.locality ? `, ${report.locality}` : ''}`,
+          sourceDescription: report.context_and_desired_outcome || 'No details provided.',
+          sourceStatus: report.status,
+          sourcePriority: report.priority,
+          sourceDate: report.created_at ? new Date(report.created_at).toLocaleDateString('en-IN') : 'Recent',
+          candidateTrackId: candTrackId,
+          candidateTitle: candTitle,
+          candidateCategory: candCategory,
+          candidateLocation: candLoc,
+          candidateStatus: candStatus,
+          candidatePriority: candPriority,
+          candidateDate: candDate,
+          similarityScore: score,
+          similarityPercent: percent,
+          classification: item.classification,
+          reasons: item.reasons.length > 0 ? item.reasons : ['High text similarity and regional proximity'],
+          officialReview: review,
+          isConfirmed: isHumanConfirmed,
+          isDismissed: isHumanDismissed,
+          isPending,
+        })
       }
     }
 
@@ -257,15 +317,16 @@ export function DuplicateAnalysisPage() {
     })
   }, [duplicatePairs, activeTab, selectedCategory, minSimilarity, searchQuery])
 
-  // ACTION 1: Mark as Duplicate
-  const handleConfirmMarkDuplicate = async () => {
+  // ACTION 1: Link Duplicate to Original Problem
+  const handleExecuteDuplicateAction = async () => {
     if (!confirmingPair) return
 
     setIsSubmittingReview(true)
-    const { sourceTrackId, candidateTrackId } = confirmingPair
+    const { pair } = confirmingPair
+    const { sourceTrackId, candidateTrackId } = pair
     const remarks =
       officialRemarks.trim() ||
-      `Confirmed duplicate of ${candidateTrackId} by Government Official review.`
+      `Problem [${sourceTrackId}] linked to canonical problem [${candidateTrackId}] by Government Official.`
 
     try {
       await submitDuplicateReview(sourceTrackId, {
@@ -275,7 +336,7 @@ export function DuplicateAnalysisPage() {
       })
 
       showFeedback(
-        `Problem [${sourceTrackId}] confirmed as duplicate of [${candidateTrackId}]. Relationship saved in database. Neither report was deleted.`,
+        `Problem [${sourceTrackId}] successfully linked to canonical problem [${candidateTrackId}]. Relationship and status updated in database.`,
         'success'
       )
       setConfirmingPair(null)
@@ -283,17 +344,17 @@ export function DuplicateAnalysisPage() {
       await loadReportsData()
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to submit duplicate review.'
-      showFeedback(`Error marking duplicate: ${msg}`, 'error')
+      showFeedback(`Error: ${msg}`, 'error')
     } finally {
       setIsSubmittingReview(false)
     }
   }
 
-  // ACTION 2: Not a Duplicate
-  const handleMarkNotDuplicate = async (pair: LiveDuplicatePair) => {
+  // ACTION 3: Keep as Separate Problem (Dismiss duplicate flag)
+  const handleKeepSeparate = async (pair: LiveDuplicatePair) => {
     setIsLoading(true)
     const { sourceTrackId, candidateTrackId } = pair
-    const remarks = `Official review: Evaluated as distinct separate problems by Government Official.`
+    const remarks = `Official review: Evaluated as distinct separate problem by Government Official.`
 
     try {
       await submitDuplicateReview(sourceTrackId, {
@@ -303,20 +364,25 @@ export function DuplicateAnalysisPage() {
       })
 
       showFeedback(
-        `Pair [${sourceTrackId}] and [${candidateTrackId}] marked as NOT a duplicate. Similarity match dismissed from pending list.`,
+        `Problem [${sourceTrackId}] kept as independent problem. Duplicate flag removed.`,
         'info'
       )
       await loadReportsData()
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to dismiss duplicate.'
-      showFeedback(`Error dismissing duplicate: ${msg}`, 'error')
+      const msg = err instanceof Error ? err.message : 'Failed to update problem.'
+      showFeedback(`Error: ${msg}`, 'error')
       setIsLoading(false)
     }
   }
 
-  // ACTION 3: Review Original Problem in Problem Queue
-  const handleReviewOriginal = (candTrackId: string) => {
-    navigate(`/government/problem-queue?selected=${encodeURIComponent(candTrackId)}`)
+  // ACTION 4: View Original Problem in Review Page
+  const handleViewOriginal = (candTrackId: string) => {
+    navigate(`/government/problems/${encodeURIComponent(candTrackId)}/review`)
+  }
+
+  // ACTION 5: Review Duplicate Problem in Review Page
+  const handleReviewDuplicate = (sourceTrackId: string) => {
+    navigate(`/government/problems/${encodeURIComponent(sourceTrackId)}/review`)
   }
 
   const renderSimilarityBadge = (percent: number) => {
@@ -338,13 +404,13 @@ export function DuplicateAnalysisPage() {
   }
 
   return (
-    <GovernmentLayout title="Duplicates">
+    <GovernmentLayout title="Duplicate Management">
       <GovPage
-        title="Duplicates"
-        description="Review semantic duplicate citizen submissions detected by AI embeddings. Take official administrative action without deleting records."
+        title="Duplicate Management Module"
+        description="Review AI-detected semantic duplicate citizen submissions, link or merge them with canonical problems, and maintain a consolidated database source of truth."
         breadcrumbs={[
           { label: 'Government', href: '/government/dashboard' },
-          { label: 'Duplicates' },
+          { label: 'Duplicate Module' },
         ]}
         action={
           <button
@@ -399,12 +465,11 @@ export function DuplicateAnalysisPage() {
           <Bot className="shrink-0 text-[#187e8d]" size={22} />
           <div className="space-y-1">
             <p className="font-semibold text-[#13243b]">
-              Live PostgreSQL Citizen Duplicate Analysis Engine
+              Dynamic PostgreSQL Citizen Duplicate Detection Engine
             </p>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Candidate duplicates are generated in real-time by the AI embedding & similarity system comparing
-              citizen-submitted problems across location, category, and grievance context. Review actions persist to the
-              database and write audit logs without deleting reports.
+              Every newly submitted problem is compared against all live citizen problems using AI cosine similarity and geographic clustering.
+              Government officials can confirm duplicates, merge reports, or keep them separate. Canonical problems remain intact while audit history is preserved.
             </p>
           </div>
         </div>
@@ -449,7 +514,7 @@ export function DuplicateAnalysisPage() {
               }`}
             >
               <CheckCircle2 size={13} />
-              <span>Dismissed / Not Duplicate ({counts.dismissed})</span>
+              <span>Kept Separate / Dismissed ({counts.dismissed})</span>
             </button>
 
             <button
@@ -462,7 +527,7 @@ export function DuplicateAnalysisPage() {
               }`}
             >
               <Layers size={13} />
-              <span>All Matches ({counts.all})</span>
+              <span>All Problem Pairs ({counts.all})</span>
             </button>
           </div>
 
@@ -478,7 +543,7 @@ export function DuplicateAnalysisPage() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by track ID, problem title, locality, or AI match reason..."
+                placeholder="Search by Track ID, problem title, location, or AI match rationale..."
                 className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-4 text-xs text-slate-700 placeholder:text-slate-400 focus:border-[#187e8d] focus:outline-none focus:ring-1 focus:ring-[#187e8d]"
               />
             </div>
@@ -520,10 +585,10 @@ export function DuplicateAnalysisPage() {
           {/* Item Counter Summary */}
           <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-[11px] text-slate-500">
             <span>
-              Showing <b>{filteredPairs.length}</b> live duplicate candidate pair{filteredPairs.length === 1 ? '' : 's'}
+              Showing <b>{filteredPairs.length}</b> live problem pair{filteredPairs.length === 1 ? '' : 's'}
               {duplicatePairs.length !== filteredPairs.length && ` (filtered from ${duplicatePairs.length} total)`}
             </span>
-            <span className="font-mono text-slate-400">Direct Supabase/PostgreSQL Data</span>
+            <span className="font-mono text-slate-400">PostgreSQL Live Data</span>
           </div>
         </div>
 
@@ -580,7 +645,7 @@ export function DuplicateAnalysisPage() {
                     ) : pair.isDismissed ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-800 border border-emerald-200">
                         <CheckCircle2 size={12} />
-                        Dismissed (Not a Duplicate)
+                        Kept as Separate Problem
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-800 border border-amber-200">
@@ -590,22 +655,22 @@ export function DuplicateAnalysisPage() {
                     )}
 
                     <span className="text-xs text-slate-400">
-                      Classification: <b className="capitalize text-slate-600">{pair.classification.replace(/_/g, ' ')}</b>
+                      AI Flag: <b className="capitalize text-slate-600">{pair.classification.replace(/_/g, ' ')}</b>
                     </span>
                   </div>
 
                   {renderSimilarityBadge(pair.similarityPercent)}
                 </div>
 
-                {/* Comparison Grid: Current Problem vs Matched Original Candidate */}
+                {/* Side-by-side comparison: Duplicate / Newly Submitted vs Original / Canonical Problem */}
                 <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                  {/* Current / Newly Submitted Citizen Problem */}
+                  {/* Duplicate / Candidate Problem */}
                   <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
                     <div className="flex items-center justify-between">
                       <span className="rounded bg-[#12365a] px-2 py-0.5 font-mono text-xs font-bold text-white">
                         {pair.sourceTrackId}
                       </span>
-                      <span className="text-[11px] font-semibold text-slate-500">Current Complaint</span>
+                      <span className="text-[11px] font-semibold text-slate-500">Duplicate / New Problem</span>
                     </div>
 
                     <h3 className="mt-2 font-[Manrope] text-base font-bold text-[#13243b]">
@@ -628,16 +693,30 @@ export function DuplicateAnalysisPage() {
                       <span className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 border border-slate-200 font-semibold text-slate-700">
                         Status: {pair.sourceStatus}
                       </span>
+                      <span className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 border border-slate-200">
+                        Submitted: <b>{pair.sourceDate}</b>
+                      </span>
+                    </div>
+
+                    <div className="mt-3 pt-2 border-t border-slate-200/60 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => handleReviewDuplicate(pair.sourceTrackId)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-[#187e8d] hover:underline"
+                      >
+                        <span>Open in Review Problem</span>
+                        <ExternalLink size={12} />
+                      </button>
                     </div>
                   </div>
 
-                  {/* Matched Original Candidate Problem */}
+                  {/* Canonical / Original Problem */}
                   <div className="rounded-xl border border-amber-200/80 bg-amber-50/40 p-4">
                     <div className="flex items-center justify-between">
                       <span className="rounded bg-teal-800 px-2 py-0.5 font-mono text-xs font-bold text-white">
                         {pair.candidateTrackId}
                       </span>
-                      <span className="text-[11px] font-semibold text-teal-800">Original / Existing Problem</span>
+                      <span className="text-[11px] font-semibold text-teal-800">Canonical / Original Problem</span>
                     </div>
 
                     <h3 className="mt-2 font-[Manrope] text-base font-bold text-[#13243b]">
@@ -659,18 +738,28 @@ export function DuplicateAnalysisPage() {
                       <span className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 border border-slate-200">
                         Priority: {pair.candidatePriority}
                       </span>
+                      <span className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 border border-slate-200">
+                        Submitted: <b>{pair.candidateDate}</b>
+                      </span>
                     </div>
 
-                    <div className="mt-3 text-[11px] text-slate-500">
-                      Submitted: <b>{pair.candidateDate}</b>
+                    <div className="mt-3 pt-2 border-t border-amber-200/60 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => handleViewOriginal(pair.candidateTrackId)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-teal-800 hover:underline"
+                      >
+                        <span>Open Canonical in Review</span>
+                        <ExternalLink size={12} />
+                      </button>
                     </div>
                   </div>
                 </div>
 
-                {/* AI Explainable Similarity Reasons */}
+                {/* AI Explainable Similarity Explanation */}
                 <div className="mt-4 rounded-lg bg-slate-100/70 p-3">
                   <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
-                    AI Similarity Drivers & Geographic Proximity:
+                    AI Duplicate Explanation & Matching Drivers:
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {pair.reasons.map((reason, idx) => (
@@ -696,43 +785,43 @@ export function DuplicateAnalysisPage() {
                     )}
                     {pair.officialReview.reviewed_at && (
                       <p className="mt-1 text-[11px] text-slate-400">
-                        Reviewed at: {new Date(pair.officialReview.reviewed_at).toLocaleString('en-IN')}
+                        Recorded on: {new Date(pair.officialReview.reviewed_at).toLocaleString('en-IN')}
                       </p>
                     )}
                   </div>
                 )}
 
-                {/* 3 Core Actions */}
+                {/* Duplicate Workflow Actions */}
                 <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    {/* Action 1: Mark as Duplicate */}
+                    {/* Link to Original Problem */}
                     <button
                       type="button"
-                      onClick={() => setConfirmingPair(pair)}
+                      onClick={() => setConfirmingPair({ pair })}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-[#12365a] px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#0e2a47]"
                     >
-                      <CheckCircle2 size={13} className="text-emerald-400" />
-                      <span>Mark as duplicate</span>
+                      <Link2 size={13} className="text-teal-300" />
+                      <span>Link to Original Problem</span>
                     </button>
 
-                    {/* Action 2: Not a Duplicate */}
+                    {/* Keep as Separate Problem */}
                     <button
                       type="button"
-                      onClick={() => handleMarkNotDuplicate(pair)}
+                      onClick={() => handleKeepSeparate(pair)}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 hover:text-slate-900"
                     >
                       <XCircle size={13} className="text-slate-400" />
-                      <span>Not a duplicate</span>
+                      <span>Keep as Separate Problem</span>
                     </button>
                   </div>
 
-                  {/* Action 3: Review Original Problem */}
+                  {/* View Original Problem */}
                   <button
                     type="button"
-                    onClick={() => handleReviewOriginal(pair.candidateTrackId)}
+                    onClick={() => handleViewOriginal(pair.candidateTrackId)}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-[#187e8d] bg-teal-50/50 px-3.5 py-2 text-xs font-bold text-[#187e8d] transition hover:bg-teal-100/60"
                   >
-                    <span>Review original problem</span>
+                    <span>View Original Problem</span>
                     <ArrowRight size={13} />
                   </button>
                 </div>
@@ -741,33 +830,33 @@ export function DuplicateAnalysisPage() {
           </div>
         )}
 
-        {/* Confirmation Modal for Action 1 (Mark as Duplicate) */}
+        {/* Modal for Link to Original Problem */}
         <ConfirmDialog
           open={Boolean(confirmingPair)}
-          title="Mark Problem as Duplicate?"
+          title="Link Duplicate to Original Problem?"
           description={
             confirmingPair
-              ? `Confirm that problem [${confirmingPair.sourceTrackId}] is an official duplicate of [${confirmingPair.candidateTrackId}]. Neither record will be deleted from PostgreSQL.`
-              : 'Confirm duplicate relationship.'
+              ? `Establish an official relationship linking duplicate report [${confirmingPair.pair.sourceTrackId}] to canonical problem [${confirmingPair.pair.candidateTrackId}]. Citizen evidence and tracking history will be fully preserved in PostgreSQL.`
+              : 'Link duplicate to original problem.'
           }
-          confirmLabel={isSubmittingReview ? 'Saving...' : 'Confirm Duplicate'}
+          confirmLabel={isSubmittingReview ? 'Linking...' : 'Link to Original Problem'}
           onCancel={() => {
             setConfirmingPair(null)
             setOfficialRemarks('')
           }}
-          onConfirm={handleConfirmMarkDuplicate}
+          onConfirm={handleExecuteDuplicateAction}
         >
           {confirmingPair && (
             <div className="mt-3 space-y-3">
               <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600 border border-slate-200">
                 <p>
-                  <b>Current Complaint:</b> [{confirmingPair.sourceTrackId}] {confirmingPair.sourceTitle}
+                  <b>Duplicate Problem:</b> [{confirmingPair.pair.sourceTrackId}] {confirmingPair.pair.sourceTitle}
                 </p>
                 <p className="mt-1">
-                  <b>Original Problem:</b> [{confirmingPair.candidateTrackId}] {confirmingPair.candidateTitle}
+                  <b>Canonical Original:</b> [{confirmingPair.pair.candidateTrackId}] {confirmingPair.pair.candidateTitle}
                 </p>
                 <p className="mt-1 text-slate-500 font-mono">
-                  Similarity: {confirmingPair.similarityPercent}%
+                  Similarity Score: {confirmingPair.pair.similarityPercent}%
                 </p>
               </div>
 
@@ -779,7 +868,7 @@ export function DuplicateAnalysisPage() {
                   rows={2}
                   value={officialRemarks}
                   onChange={(e) => setOfficialRemarks(e.target.value)}
-                  placeholder="Enter notes on field verification or grievance consolidation..."
+                  placeholder="Enter remarks on grievance consolidation or field verification..."
                   className="w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-800 placeholder:text-slate-400 focus:border-[#187e8d] focus:outline-none focus:ring-1 focus:ring-[#187e8d]"
                 />
               </div>

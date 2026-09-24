@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger("reports_route")
 
+from app.core.config import settings
 from app.api.deps import get_current_user, get_optional_current_user, require_roles, get_db
 from app.models.notification import Notification
 from app.models.report import Report
@@ -60,6 +61,23 @@ from app.schemas.faculty_student_matching_schema import (
     FacultyInterestActionResponse,
     StudentInterestCreate,
     StudentInterestActionResponse,
+    FacultyAssignmentItem,
+    FacultyRegistryItem,
+    FacultyAssignmentAssignRequest,
+    FacultyAssignmentActionResponse,
+)
+from app.models.partner import PartnerProfile, PartnerInterest
+from app.models.university_support import ProjectResourceRequest, GovernmentFeedback
+from app.schemas.university_support_schema import (
+    UniversityResourceRequestItem,
+    UniversityResourceCreateRequest,
+    UniversityResourceActionResponse,
+    UniversityCollaborationItem,
+    UniversityCollaborationCreateRequest,
+    UniversityCollaborationActionResponse,
+    UniversityGovernmentFeedbackItem,
+    UniversityFeedbackRespondRequest,
+    UniversityFeedbackActionResponse,
 )
 from app.schemas.capability_gap_schema import (
     GapFactorScores,
@@ -186,6 +204,9 @@ def create_report(
         priority=initial_priority,
         status=ReportStatus.OPEN.value,
         verification_status="Pending Verification",
+        is_active=True,
+        affected_people=payload.affected_people if payload.affected_people is not None else 0,
+        citizen_name=current_user.full_name if (current_user and current_user.full_name) else (payload.citizen_name or None),
         citizen_id=current_user.id if current_user else None,
     )
 
@@ -210,7 +231,10 @@ def create_report(
         title="New Problem Reported",
         message=f"New report in {db_report.district} ({db_report.category}): {db_report.problem_title}",
         related_track_id=track_id,
-        priority="Important" if db_report.priority in ["High", "Critical"] else "Normal",
+        related_entity_id=track_id,
+        action_url=f"/government/problems/{track_id}/review",
+        priority="Critical" if db_report.priority == "Critical" else ("Important" if db_report.priority == "High" else "Normal"),
+        event_key=f"report_submitted_{track_id}",
     )
     db.add(notification)
 
@@ -235,10 +259,84 @@ def create_report(
     db.commit()
     db.refresh(db_report)
 
+    # AI Pre-Screening: 1. Duplicate & Similarity Check against live problems
+    top_duplicate_match = None
+    try:
+        from app.services.similarity_service import find_similar_reports
+        similar_matches = find_similar_reports(db, db_report, top_k=5)
+        if similar_matches:
+            top_cand = similar_matches[0]
+            if top_cand.get("similarity_score", 0.0) >= settings.SIMILARITY_THRESHOLD_DUPLICATE or (
+                top_cand.get("title", "").strip().lower() == db_report.problem_title.strip().lower()
+            ):
+                top_duplicate_match = top_cand
+    except Exception as e:
+        logger.error(f"Error checking similarity in pre-screening for {track_id}: {e}", exc_info=True)
+
+    if top_duplicate_match:
+        # Link to canonical problem and reuse its category, priority, and AI analysis deterministically
+        canonical_track_id = top_duplicate_match["matching_track_id"]
+        canonical = db.query(Report).filter(Report.track_id == canonical_track_id).first()
+        if canonical:
+            logger.info(f"Report {track_id} identified as duplicate of canonical problem {canonical_track_id}; reusing AI analysis.")
+            db_report.category = canonical.category
+            db_report.ai_category = canonical.ai_category
+            db_report.ai_subcategory = canonical.ai_subcategory
+            db_report.ai_problem_type = canonical.ai_problem_type
+            db_report.ai_summary = canonical.ai_summary
+            db_report.ai_confidence_score = canonical.ai_confidence_score
+            db_report.ai_analysis_status = canonical.ai_analysis_status or "completed"
+            db_report.ai_model = canonical.ai_model
+            db_report.ai_analyzed_at = datetime.now(timezone.utc)
+
+            db_report.priority = canonical.priority
+            db_report.ai_priority = canonical.ai_priority
+            db_report.ai_priority_score = canonical.ai_priority_score
+            db_report.ai_priority_reasons = canonical.ai_priority_reasons
+            db_report.ai_priority_factors = canonical.ai_priority_factors
+            db_report.ai_priority_status = canonical.ai_priority_status or "completed"
+            db_report.ai_priority_model = canonical.ai_priority_model
+            db_report.ai_priority_analyzed_at = datetime.now(timezone.utc)
+
+            db_report.ai_capabilities = canonical.ai_capabilities
+            db_report.ai_capability_status = canonical.ai_capability_status
+            db_report.ai_capability_confidence = canonical.ai_capability_confidence
+            db_report.ai_hei_matches = canonical.ai_hei_matches
+            db_report.ai_hei_matching_status = canonical.ai_hei_matching_status
+            db_report.ai_faculty_matches = canonical.ai_faculty_matches
+            db_report.ai_student_matches = canonical.ai_student_matches
+            db_report.ai_faculty_matching_status = canonical.ai_faculty_matching_status
+            db_report.ai_capability_gap_analysis = canonical.ai_capability_gap_analysis
+            db_report.ai_capability_gap_score = canonical.ai_capability_gap_score
+            db_report.ai_capability_gap_severity = canonical.ai_capability_gap_severity
+            db_report.ai_capability_gap_status = canonical.ai_capability_gap_status
+            db_report.ai_partner_matches = canonical.ai_partner_matches
+            db_report.ai_partner_matching_status = canonical.ai_partner_matching_status
+            db_report.ai_project_analytics = canonical.ai_project_analytics
+            db_report.ai_project_feasibility_score = canonical.ai_project_feasibility_score
+            db_report.ai_project_impact_score = canonical.ai_project_impact_score
+            db_report.ai_project_readiness_score = canonical.ai_project_readiness_score
+            db_report.ai_project_risk_score = canonical.ai_project_risk_score
+            db_report.ai_project_analytics_status = canonical.ai_project_analytics_status
+
+            db_report.ai_similarity_status = "needs_review"
+            db_report.ai_similarity_matches = similar_matches
+            db_report.ai_similarity_model = settings.AI_EMBEDDING_MODEL
+            db_report.ai_similarity_analyzed_at = datetime.now(timezone.utc)
+            db.commit()
+
+            try:
+                analyze_and_store_report_duplicates(db, db_report)
+            except Exception as e:
+                logger.error(f"Error storing duplicate analysis for {track_id}: {e}", exc_info=True)
+
+            db.refresh(db_report)
+            return db_report
+
+    # If not a duplicate, execute full independent deterministic AI Pre-Screening pipeline
     # AI Pre-Screening: Category classification (Phase 1 Part 1)
     try:
         analyze_and_store_report_ai(db, db_report)
-        # If no manual category was specified, adopt the AI-determined category
         if (not payload.category or payload.category == "Civic Issue") and db_report.ai_category:
             db_report.category = db_report.ai_category
             db.commit()
@@ -249,7 +347,6 @@ def create_report(
     # AI Pre-Screening: Priority assessment (Phase 1 Part 2)
     try:
         analyze_and_store_report_priority(db, db_report)
-        # If no manual priority was specified, adopt the AI-assessed priority
         if not payload.priority and db_report.ai_priority:
             db_report.priority = db_report.ai_priority
             db.commit()
@@ -332,10 +429,10 @@ def list_reports(
     priority: Optional[str] = Query(None, description="Filter by priority"),
     target_dashboard: Optional[str] = Query(None, description="Filter for specific portal ('university' or 'partner')"),
     skip: int = Query(0, ge=0, description="Pagination offset"),
-    limit: int = Query(100, ge=1, le=1000, description="Max results per page"),
+    limit: int = Query(10, ge=1, le=1000, description="Max results per page"),
     db: Session = Depends(get_db),
 ) -> List[Report]:
-    query = db.query(Report)
+    query = db.query(Report).filter(Report.is_active == True)
 
     # If target_dashboard is specified, enforce strict Government-validated + AI routing assignment rules
     if target_dashboard:
@@ -362,7 +459,15 @@ def list_reports(
     if priority:
         query = query.filter(func.lower(Report.priority) == priority.strip().lower())
 
-    return query.order_by(Report.created_at.desc()).offset(skip).limit(limit).all()
+    reports = query.order_by(Report.created_at.desc()).offset(skip).limit(limit).all()
+    for r in reports:
+        if not r.citizen_name and r.citizen_id:
+            user = db.query(User).filter(User.id == r.citizen_id).first()
+            if user and user.full_name:
+                r.citizen_name = user.full_name
+        if r.affected_people is None:
+            r.affected_people = 0
+    return reports
 
 
 @router.get(
@@ -394,29 +499,943 @@ def get_my_reports(
         .order_by(Report.created_at.desc())
         .all()
     )
+    for r in reports:
+        if not r.citizen_name:
+            r.citizen_name = current_user.full_name
+        if r.affected_people is None:
+            r.affected_people = 0
     return reports
+
+
+@router.get(
+    "/faculty/assignments",
+    response_model=List[FacultyAssignmentItem],
+    summary="List real problems assigned to faculty members of HEIs",
+    description="Returns all civic problems/projects assigned to faculty members with live department, expertise, stage, and progress metrics.",
+)
+def list_faculty_assignments(
+    institution_id: Optional[str] = None,
+    faculty_id: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+) -> List[FacultyAssignmentItem]:
+    from app.services.faculty_student_matching_service import get_or_seed_faculty_profiles
+    get_or_seed_faculty_profiles(db)
+
+    # 1. Fetch all faculty profiles and index them
+    fac_profiles = db.query(FacultyProfile).all()
+    fac_by_id = {f.faculty_id: f for f in fac_profiles}
+    fac_by_name = {f.name.lower().strip(): f for f in fac_profiles}
+
+    # 2. Fetch all FacultyInterest records
+    interests = (
+        db.query(FacultyInterest)
+        .order_by(FacultyInterest.created_at.desc())
+        .all()
+    )
+    interests_by_track: Dict[str, List[FacultyInterest]] = {}
+    for i in interests:
+        if i.track_id not in interests_by_track:
+            interests_by_track[i.track_id] = []
+        interests_by_track[i.track_id].append(i)
+
+    # 3. Query reports that are active
+    reports = db.query(Report).filter(Report.is_active.is_(True)).order_by(Report.updated_at.desc()).all()
+
+    # Determine user's HEI institution if authenticated as HEI
+    user_inst_id = None
+    if current_user and current_user.role == "hei":
+        user_email = (current_user.email or "").lower()
+        if "bitmesra" in user_email or "bit" in (current_user.organization_name or "").lower():
+            user_inst_id = "bit-mesra"
+    if institution_id:
+        user_inst_id = institution_id.strip().lower()
+
+    assignment_items: List[FacultyAssignmentItem] = []
+    seen_track_ids = set()
+
+    for report in reports:
+        assigned_name = (report.assigned_to or "").strip()
+        matched_faculty: Optional[FacultyProfile] = None
+
+        if assigned_name:
+            if assigned_name.lower() in fac_by_name:
+                matched_faculty = fac_by_name[assigned_name.lower()]
+            elif assigned_name in fac_by_id:
+                matched_faculty = fac_by_id[assigned_name]
+            else:
+                for f in fac_profiles:
+                    if f.name.lower() in assigned_name.lower() or assigned_name.lower() in f.name.lower():
+                        matched_faculty = f
+                        break
+
+        # If not matched directly, check FacultyInterest records
+        report_interests = interests_by_track.get(report.track_id, [])
+        if not matched_faculty and report_interests:
+            for ri in report_interests:
+                if ri.faculty_id in fac_by_id:
+                    matched_faculty = fac_by_id[ri.faculty_id]
+                    break
+
+        if not matched_faculty:
+            continue
+
+        # If filtered by faculty_id
+        if faculty_id and matched_faculty.faculty_id != faculty_id.strip():
+            continue
+
+        # If filtered by institution
+        if user_inst_id and matched_faculty.institution_id.lower() != user_inst_id:
+            # If HEI is looking at assignments, also allow if report is connected
+            if not is_hei_connected_to_report(current_user, report, db):
+                continue
+
+        # If status filter
+        if status_filter and report.status.lower() != status_filter.strip().lower():
+            continue
+
+        if report.track_id in seen_track_ids:
+            continue
+        seen_track_ids.add(report.track_id)
+
+        # Determine current project stage and overall progress
+        readiness = float(report.ai_project_readiness_score or 0.0)
+
+        # Stage computation
+        if report.status in ["Resolved", "Completed"]:
+            current_stage = "Impact / Deployment"
+            overall_progress = 100
+        elif readiness >= 80 or report.status in ["Pilot Testing", "Prototype", "Field Trial"]:
+            current_stage = "Prototype / Pilot"
+            overall_progress = int(max(readiness, 85))
+        elif readiness >= 60 or report.status in ["Solution Formulated", "In Development"]:
+            current_stage = "Proposed Solution"
+            overall_progress = int(max(readiness, 65))
+        elif readiness >= 40 or report.status in ["In Progress", "Assigned", "Under Investigation"]:
+            current_stage = "Problem Analysis"
+            overall_progress = int(max(readiness, 45))
+        else:
+            current_stage = "Problem Formulation & Matching"
+            overall_progress = int(max(readiness, 30))
+
+        # Determine assignment date
+        assign_date = report.assigned_at
+        if not assign_date and report_interests:
+            assign_date = report_interests[0].created_at
+        if not assign_date:
+            assign_date = report.updated_at or report.created_at
+
+        # Location string
+        loc_str = f"{report.locality}, {report.district}" if report.locality else report.district
+
+        # Category
+        cat_str = report.ai_category or report.category
+
+        # Extract solution title if available from project analytics or context
+        sol_title = None
+        if report.ai_project_analytics and isinstance(report.ai_project_analytics, dict):
+            sol_title = report.ai_project_analytics.get("solution_concept") or report.ai_project_analytics.get("proposed_solution_title")
+        if not sol_title:
+            sol_title = f"{cat_str} Solution Initiative"
+
+        assignment_items.append(
+            FacultyAssignmentItem(
+                id=report.id,
+                track_id=report.track_id,
+                problem_title=report.problem_title,
+                category=cat_str,
+                district=report.district,
+                locality=report.locality,
+                location=loc_str,
+                affected_people=int(report.affected_people or 0),
+                priority=report.priority or "Medium",
+                verification_status=report.verification_status or "Verified",
+                assigned_faculty_id=matched_faculty.faculty_id,
+                assigned_faculty_name=matched_faculty.name,
+                faculty_department=matched_faculty.department,
+                faculty_expertise=matched_faculty.research_expertise or matched_faculty.skills or [],
+                faculty_email=matched_faculty.contact_email or matched_faculty.associated_user_email,
+                faculty_institution_id=matched_faculty.institution_id,
+                faculty_institution_name=matched_faculty.institution_name,
+                assignment_date=assign_date,
+                assignment_status=report.status or "In Progress",
+                current_project_stage=current_stage,
+                overall_progress=overall_progress,
+                solution_title=sol_title,
+                remarks=report.official_remarks or (report_interests[0].remarks if report_interests else None),
+            )
+        )
+
+    return assignment_items
+
+
+@router.get(
+    "/faculty/registry",
+    response_model=List[FacultyRegistryItem],
+    summary="List all registered HEI faculty members with active assignments count",
+)
+def list_faculty_registry(
+    institution_id: Optional[str] = None,
+    department: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+) -> List[FacultyRegistryItem]:
+    from app.services.faculty_student_matching_service import get_or_seed_faculty_profiles
+    get_or_seed_faculty_profiles(db)
+
+    query = db.query(FacultyProfile)
+    if institution_id:
+        query = query.filter(FacultyProfile.institution_id == institution_id.strip())
+    if department and department != "All":
+        query = query.filter(FacultyProfile.department == department.strip())
+
+    profiles = query.order_by(FacultyProfile.name.asc()).all()
+
+    results: List[FacultyRegistryItem] = []
+    for p in profiles:
+        assigned_reports = (
+            db.query(Report)
+            .filter(
+                Report.is_active.is_(True),
+                (func.lower(Report.assigned_to) == p.name.lower()) |
+                (Report.assigned_to == p.faculty_id)
+            )
+            .all()
+        )
+        assigned_track_ids = [r.track_id for r in assigned_reports]
+
+        interests = db.query(FacultyInterest).join(
+            Report, Report.id == FacultyInterest.report_id
+        ).filter(
+            Report.is_active.is_(True),
+            FacultyInterest.faculty_id == p.faculty_id,
+            FacultyInterest.action_type == "faculty_assignment",
+        ).all()
+        for i in interests:
+            if i.track_id not in assigned_track_ids:
+                assigned_track_ids.append(i.track_id)
+
+        count = len(assigned_track_ids)
+        avail = "available" if count == 0 else ("assigned" if count <= 2 else "full capacity")
+
+        results.append(
+            FacultyRegistryItem(
+                faculty_id=p.faculty_id,
+                name=p.name,
+                institution_id=p.institution_id,
+                institution_name=p.institution_name,
+                department=p.department,
+                designation="Professor & Research Lead" if "01" in p.faculty_id else "Associate Professor",
+                skills=p.skills or [],
+                technical_domains=p.technical_domains or [],
+                research_expertise=p.research_expertise or [],
+                project_experience=p.project_experience or "high",
+                availability=avail,
+                current_workload=count,
+                district=p.district or "Ranchi",
+                state=p.state or "Jharkhand",
+                verification_status=p.verification_status or "verified",
+                contact_email=p.contact_email,
+                associated_user_email=p.associated_user_email,
+                active_assignments_count=count,
+                assigned_problem_track_ids=assigned_track_ids,
+            )
+        )
+
+    return results
+
+
+@router.post(
+    "/{track_id}/assign-faculty",
+    response_model=FacultyAssignmentActionResponse,
+    summary="Assign a verified civic challenge to a faculty mentor",
+)
+def assign_faculty_to_report(
+    track_id: str,
+    payload: FacultyAssignmentAssignRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+) -> FacultyAssignmentActionResponse:
+    from app.services.faculty_student_matching_service import get_or_seed_faculty_profiles
+    get_or_seed_faculty_profiles(db)
+
+    query_str = track_id.strip()
+    report = None
+    if query_str.isdigit():
+        report = db.query(Report).filter(Report.id == int(query_str)).first()
+    if not report:
+        report = db.query(Report).filter(func.lower(Report.track_id) == query_str.lower()).first()
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Report with Track ID '{track_id}' not found.",
+        )
+
+    faculty = db.query(FacultyProfile).filter(FacultyProfile.faculty_id == payload.faculty_id.strip()).first()
+    if not faculty:
+        # Also try matching by name
+        faculty = db.query(FacultyProfile).filter(func.lower(FacultyProfile.name) == payload.faculty_id.strip().lower()).first()
+    if not faculty:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Faculty profile with identifier '{payload.faculty_id}' not found.",
+        )
+
+    actor_name = current_user.full_name if current_user else "Dean R&D (University)"
+    actor_email = current_user.email if current_user else "dean.rnd@bitmesra.ac.in"
+    actor_role = current_user.role if current_user else "hei"
+    actor_id = current_user.id if current_user else None
+
+    # Update report fields
+    report.assigned_to = faculty.name
+    report.assigned_role = "faculty"
+    report.assigned_by = actor_name
+    report.assigned_at = datetime.now(timezone.utc)
+    report.updated_at = datetime.now(timezone.utc)
+    if report.status in ["Open", "Pending", "Validated", "Verified"]:
+        report.status = "In Progress"
+
+    # Add or update FacultyInterest record
+    existing_interest = db.query(FacultyInterest).filter(
+        FacultyInterest.report_id == report.id,
+        FacultyInterest.faculty_id == faculty.faculty_id,
+    ).first()
+
+    if not existing_interest:
+        new_interest = FacultyInterest(
+            report_id=report.id,
+            track_id=report.track_id,
+            faculty_id=faculty.faculty_id,
+            faculty_name=faculty.name,
+            institution_id=faculty.institution_id,
+            action_type="faculty_assignment",
+            actor_user_id=actor_id,
+            actor_name=actor_name,
+            actor_role=actor_role,
+            actor_email=actor_email,
+            remarks=payload.remarks or f"Assigned to {faculty.name} ({faculty.department})",
+        )
+        db.add(new_interest)
+    else:
+        existing_interest.action_type = "faculty_assignment"
+        existing_interest.remarks = payload.remarks or f"Assigned to {faculty.name}"
+
+    # Status history & Audit Log
+    history = ReportStatusHistory(
+        report_id=report.id,
+        previous_status=report.status,
+        new_status="In Progress",
+        changed_by=actor_name,
+        remarks=payload.remarks or f"Assigned to faculty mentor {faculty.name} ({faculty.department})",
+    )
+    db.add(history)
+
+    audit = AuditLog(
+        actor_user_id=actor_id,
+        actor_email=actor_email,
+        action="faculty_assignment_created",
+        entity_type="report",
+        entity_id=report.track_id,
+        metadata_json=json.dumps({
+            "faculty_id": faculty.faculty_id,
+            "faculty_name": faculty.name,
+            "department": faculty.department,
+            "institution_id": faculty.institution_id,
+            "remarks": payload.remarks,
+        }),
+    )
+    db.add(audit)
+
+    db.commit()
+    db.refresh(report)
+
+    # Build response item
+    item = FacultyAssignmentItem(
+        id=report.id,
+        track_id=report.track_id,
+        problem_title=report.problem_title,
+        category=report.ai_category or report.category,
+        district=report.district,
+        locality=report.locality,
+        location=f"{report.locality}, {report.district}" if report.locality else report.district,
+        affected_people=int(report.affected_people or 0),
+        priority=report.priority or "Medium",
+        verification_status=report.verification_status or "Verified",
+        assigned_faculty_id=faculty.faculty_id,
+        assigned_faculty_name=faculty.name,
+        faculty_department=faculty.department,
+        faculty_expertise=faculty.research_expertise or faculty.skills or [],
+        faculty_email=faculty.contact_email or faculty.associated_user_email,
+        faculty_institution_id=faculty.institution_id,
+        faculty_institution_name=faculty.institution_name,
+        assignment_date=report.assigned_at,
+        assignment_status=report.status,
+        current_project_stage="Problem Analysis",
+        overall_progress=45,
+        solution_title=f"{report.ai_category or report.category} Solution Initiative",
+        remarks=payload.remarks,
+    )
+
+    return FacultyAssignmentActionResponse(
+        status="success",
+        message=f"Successfully assigned {report.track_id} to {faculty.name}.",
+        track_id=report.track_id,
+        assignment=item,
+    )
+
+
+@router.post(
+    "/{track_id}/unassign-faculty",
+    response_model=FacultyAssignmentActionResponse,
+    summary="Unassign a faculty mentor from a report",
+)
+def unassign_faculty_from_report(
+    track_id: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+) -> FacultyAssignmentActionResponse:
+    query_str = track_id.strip()
+    report = None
+    if query_str.isdigit():
+        report = db.query(Report).filter(Report.id == int(query_str)).first()
+    if not report:
+        report = db.query(Report).filter(func.lower(Report.track_id) == query_str.lower()).first()
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Report with Track ID '{track_id}' not found.",
+        )
+
+    prev_assigned = report.assigned_to
+    report.assigned_to = None
+    report.assigned_role = None
+    report.assigned_at = None
+    report.updated_at = datetime.now(timezone.utc)
+
+    # Remove assignment interests
+    db.query(FacultyInterest).filter(
+        FacultyInterest.report_id == report.id,
+        FacultyInterest.action_type == "faculty_assignment",
+    ).delete(synchronize_session=False)
+
+    actor_name = current_user.full_name if current_user else "Dean R&D"
+    actor_email = current_user.email if current_user else "dean.rnd@bitmesra.ac.in"
+    actor_id = current_user.id if current_user else None
+
+    history = ReportStatusHistory(
+        report_id=report.id,
+        previous_status=report.status,
+        new_status=report.status,
+        changed_by=actor_name,
+        remarks=f"Unassigned from faculty mentor {prev_assigned or ''}",
+    )
+    db.add(history)
+
+    audit = AuditLog(
+        actor_user_id=actor_id,
+        actor_email=actor_email,
+        action="faculty_assignment_removed",
+        entity_type="report",
+        entity_id=report.track_id,
+        metadata_json=json.dumps({"previous_assigned": prev_assigned}),
+    )
+    db.add(audit)
+
+    db.commit()
+    db.refresh(report)
+
+    return FacultyAssignmentActionResponse(
+        status="success",
+        message=f"Successfully unassigned faculty from {report.track_id}.",
+        track_id=report.track_id,
+        assignment=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# University Portal: Resources & Support Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/university/resources",
+    response_model=List[UniversityResourceRequestItem],
+    summary="List resource and equipment support requests for university projects",
+)
+def list_university_resources(
+    institution_id: Optional[str] = None,
+    category: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+) -> List[UniversityResourceRequestItem]:
+    query = db.query(ProjectResourceRequest).join(
+        Report, Report.id == ProjectResourceRequest.report_id
+    ).filter(Report.is_active.is_(True))
+
+    if institution_id:
+        query = query.filter(ProjectResourceRequest.institution_id == institution_id.strip())
+    if category and category != "All":
+        query = query.filter(ProjectResourceRequest.resource_category == category.strip())
+
+    items = query.order_by(ProjectResourceRequest.created_at.desc()).all()
+    return [
+        UniversityResourceRequestItem(
+            id=r.id,
+            report_id=r.report_id,
+            track_id=r.track_id,
+            problem_title=r.problem_title,
+            required_resource=r.required_resource,
+            resource_category=r.resource_category,
+            quantity_details=r.quantity_details,
+            requested_date=r.created_at,
+            request_status=r.request_status,
+            approval_status=r.approval_status,
+            support_provider=r.support_provider,
+            requested_by_name=r.requested_by_name,
+            institution_id=r.institution_id,
+            notes=r.notes,
+        )
+        for r in items
+    ]
+
+
+@router.post(
+    "/{track_id}/request-resource",
+    response_model=UniversityResourceActionResponse,
+    summary="Submit a new resource/equipment support request for a university project",
+)
+def create_university_resource_request(
+    track_id: str,
+    payload: UniversityResourceCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+) -> UniversityResourceActionResponse:
+    query_str = track_id.strip()
+    report = None
+    if query_str.isdigit():
+        report = db.query(Report).filter(Report.id == int(query_str)).first()
+    if not report:
+        report = db.query(Report).filter(func.lower(Report.track_id) == query_str.lower()).first()
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Report with Track ID '{track_id}' not found.",
+        )
+
+    actor_name = current_user.full_name if current_user else "Dr. Meera Nair (Dean R&D)"
+    actor_id = current_user.id if current_user else None
+    inst_id = "bit-mesra"
+    if current_user and current_user.organization_name:
+        if "bit" in current_user.organization_name.lower():
+            inst_id = "bit-mesra"
+
+    new_request = ProjectResourceRequest(
+        report_id=report.id,
+        track_id=report.track_id,
+        problem_title=report.problem_title,
+        required_resource=payload.required_resource.strip(),
+        resource_category=payload.resource_category.strip(),
+        quantity_details=payload.quantity_details.strip(),
+        requested_by_user_id=actor_id,
+        requested_by_name=actor_name,
+        institution_id=inst_id,
+        request_status="In Fulfillment",
+        approval_status="Approved",
+        support_provider=payload.support_provider or "State Innovation Fund / Central University Lab",
+        notes=payload.notes,
+    )
+    db.add(new_request)
+
+    audit = AuditLog(
+        actor_user_id=actor_id,
+        actor_email=current_user.email if current_user else "dean.rnd@bitmesra.ac.in",
+        action="university_resource_requested",
+        entity_type="report",
+        entity_id=report.track_id,
+        metadata_json=json.dumps({
+            "required_resource": payload.required_resource,
+            "resource_category": payload.resource_category,
+            "quantity_details": payload.quantity_details,
+        }),
+    )
+    db.add(audit)
+
+    db.commit()
+    db.refresh(new_request)
+
+    item = UniversityResourceRequestItem(
+        id=new_request.id,
+        report_id=new_request.report_id,
+        track_id=new_request.track_id,
+        problem_title=new_request.problem_title,
+        required_resource=new_request.required_resource,
+        resource_category=new_request.resource_category,
+        quantity_details=new_request.quantity_details,
+        requested_date=new_request.created_at,
+        request_status=new_request.request_status,
+        approval_status=new_request.approval_status,
+        support_provider=new_request.support_provider,
+        requested_by_name=new_request.requested_by_name,
+        institution_id=new_request.institution_id,
+        notes=new_request.notes,
+    )
+
+    return UniversityResourceActionResponse(
+        status="success",
+        message=f"Successfully logged resource request '{new_request.required_resource}' for {report.track_id}.",
+        track_id=report.track_id,
+        request=item,
+    )
+
+
+# ---------------------------------------------------------------------------
+# University Portal: Industry / CSR Collaboration Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/university/collaborations",
+    response_model=List[UniversityCollaborationItem],
+    summary="List industry and CSR collaborations connected to university projects",
+)
+def list_university_collaborations(
+    partner_type: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+) -> List[UniversityCollaborationItem]:
+    interests = (
+        db.query(PartnerInterest)
+        .join(Report, Report.id == PartnerInterest.report_id)
+        .filter(Report.is_active.is_(True))
+        .order_by(PartnerInterest.created_at.desc())
+        .all()
+    )
+
+    partners_by_id = {p.partner_id: p for p in db.query(PartnerProfile).all()}
+    partners_by_name = {p.organization_name.lower().strip(): p for p in db.query(PartnerProfile).all()}
+
+    items: List[UniversityCollaborationItem] = []
+    for pi in interests:
+        rep = db.query(Report).filter(Report.id == pi.report_id).first()
+        if not rep:
+            continue
+
+        partner_prof = partners_by_id.get(pi.partner_id) or partners_by_name.get(pi.partner_name.lower().strip())
+        p_type = partner_prof.partner_type if partner_prof else "Corporate CSR"
+        if p_type.lower() == "csr":
+            p_type = "Corporate CSR"
+        elif p_type.lower() == "industry":
+            p_type = "Industry R&D"
+
+        if partner_type and partner_type != "All" and p_type.lower() != partner_type.lower():
+            continue
+
+        c_status = pi.status.capitalize() if pi.status else "Active"
+        if status_filter and status_filter != "All" and c_status.lower() != status_filter.lower():
+            continue
+
+        tech_support = pi.notes or "Telemetry sensor network integration, prototype field testing, and structural safety advisory."
+
+        if pi.proposed_amount and pi.proposed_amount > 0:
+            funding_str = f"₹{int(pi.proposed_amount):,} Direct Grant"
+        elif partner_prof and partner_prof.maximum_project_budget:
+            funding_str = f"₹{int(partner_prof.maximum_project_budget):,} Program Budget"
+        else:
+            funding_str = "Equipment & Hardware Sponsorship"
+
+        progress_val = int(rep.ai_project_readiness_score or 65)
+
+        items.append(
+            UniversityCollaborationItem(
+                id=pi.id,
+                report_id=rep.id,
+                track_id=rep.track_id,
+                problem_title=rep.problem_title,
+                partner_id=pi.partner_id,
+                partner_name=pi.partner_name,
+                partner_type=p_type,
+                support_provided=pi.support_type or "Equipment & Material Deployment",
+                technical_support=tech_support,
+                funding_contribution=funding_str,
+                collaboration_status=c_status,
+                start_date=pi.created_at,
+                current_progress=progress_val,
+                contact_email=partner_prof.contact_email if partner_prof else None,
+                notes=pi.notes,
+            )
+        )
+
+    return items
+
+
+@router.post(
+    "/{track_id}/partner-collaboration",
+    response_model=UniversityCollaborationActionResponse,
+    summary="Initiate an industry/CSR collaboration request for an assigned project",
+)
+def create_partner_collaboration(
+    track_id: str,
+    payload: UniversityCollaborationCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+) -> UniversityCollaborationActionResponse:
+    query_str = track_id.strip()
+    report = None
+    if query_str.isdigit():
+        report = db.query(Report).filter(Report.id == int(query_str)).first()
+    if not report:
+        report = db.query(Report).filter(func.lower(Report.track_id) == query_str.lower()).first()
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Report with Track ID '{track_id}' not found.",
+        )
+
+    partner = db.query(PartnerProfile).filter(PartnerProfile.partner_id == payload.partner_id.strip()).first()
+    if not partner:
+        partner = db.query(PartnerProfile).filter(func.lower(PartnerProfile.organization_name) == payload.partner_id.strip().lower()).first()
+    if not partner:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Partner with identifier '{payload.partner_id}' not found.",
+        )
+
+    actor_name = current_user.full_name if current_user else "Dr. Meera Nair (Dean R&D)"
+    actor_id = current_user.id if current_user else None
+
+    new_interest = PartnerInterest(
+        report_id=report.id,
+        track_id=report.track_id,
+        partner_id=partner.partner_id,
+        partner_name=partner.organization_name,
+        support_type=payload.support_type or "Equipment & Funding Support",
+        proposed_amount=payload.proposed_amount or partner.maximum_project_budget or 500000.0,
+        proposed_resources=partner.equipment or [],
+        notes=payload.notes or f"Collaboration initiated by University Dean R&D for {report.problem_title}.",
+        status="active",
+        created_by=actor_name,
+        creator_user_id=actor_id,
+        creator_role="hei",
+    )
+    db.add(new_interest)
+
+    audit = AuditLog(
+        actor_user_id=actor_id,
+        actor_email=current_user.email if current_user else "dean.rnd@bitmesra.ac.in",
+        action="university_partner_collaboration_created",
+        entity_type="report",
+        entity_id=report.track_id,
+        metadata_json=json.dumps({
+            "partner_id": partner.partner_id,
+            "partner_name": partner.organization_name,
+            "support_type": payload.support_type,
+            "proposed_amount": payload.proposed_amount,
+        }),
+    )
+    db.add(audit)
+
+    db.commit()
+    db.refresh(new_interest)
+
+    collab_item = UniversityCollaborationItem(
+        id=new_interest.id,
+        report_id=report.id,
+        track_id=report.track_id,
+        problem_title=report.problem_title,
+        partner_id=partner.partner_id,
+        partner_name=partner.organization_name,
+        partner_type=partner.partner_type.capitalize(),
+        support_provided=new_interest.support_type,
+        technical_support=new_interest.notes,
+        funding_contribution=f"₹{int(new_interest.proposed_amount or 0):,} Support",
+        collaboration_status="Active",
+        start_date=new_interest.created_at,
+        current_progress=int(report.ai_project_readiness_score or 65),
+        contact_email=partner.contact_email,
+        notes=new_interest.notes,
+    )
+
+    return UniversityCollaborationActionResponse(
+        status="success",
+        message=f"Successfully linked collaboration with {partner.organization_name} on {report.track_id}.",
+        track_id=report.track_id,
+        collaboration=collab_item,
+    )
+
+
+# ---------------------------------------------------------------------------
+# University Portal: Government Feedback Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/university/government-feedback",
+    response_model=List[UniversityGovernmentFeedbackItem],
+    summary="List real Government feedback and directives for university projects",
+)
+def list_university_government_feedback(
+    status_filter: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+) -> List[UniversityGovernmentFeedbackItem]:
+    feedbacks = (
+        db.query(GovernmentFeedback)
+        .join(Report, Report.id == GovernmentFeedback.report_id)
+        .filter(Report.is_active.is_(True))
+        .order_by(GovernmentFeedback.created_at.desc())
+        .all()
+    )
+
+    items: List[UniversityGovernmentFeedbackItem] = []
+    for f in feedbacks:
+        if status_filter and status_filter != "All" and f.status.lower() != status_filter.lower():
+            continue
+
+        rep = db.query(Report).filter(Report.id == f.report_id).first()
+        readiness = float(rep.ai_project_readiness_score or 0.0) if rep else 45.0
+
+        if rep and rep.status in ["Resolved", "Completed"]:
+            current_stage = "Impact / Deployment"
+        elif readiness >= 80 or (rep and rep.status in ["Pilot Testing", "Prototype", "Field Trial"]):
+            current_stage = "Prototype / Pilot"
+        elif readiness >= 60 or (rep and rep.status in ["Solution Formulated", "In Development"]):
+            current_stage = "Proposed Solution"
+        elif readiness >= 40 or (rep and rep.status in ["In Progress", "Assigned", "Under Investigation"]):
+            current_stage = "Problem Analysis"
+        else:
+            current_stage = "Problem Formulation & Matching"
+
+        officer_dept_str = f"{f.government_department} ({f.government_officer_name})" if f.government_officer_name else f.government_department
+
+        items.append(
+            UniversityGovernmentFeedbackItem(
+                id=f.id,
+                report_id=f.report_id,
+                track_id=f.track_id,
+                problem_title=f.problem_title,
+                government_officer_department=officer_dept_str,
+                government_officer_name=f.government_officer_name,
+                government_department=f.government_department,
+                feedback=f.feedback_text,
+                requested_changes=f.requested_changes,
+                university_response=f.university_response,
+                responded_by_name=f.responded_by_name,
+                responded_at=f.responded_at,
+                feedback_status=f.status,
+                date=f.created_at,
+                current_project_stage=current_stage,
+            )
+        )
+
+    return items
+
+
+@router.post(
+    "/{track_id}/feedback/{feedback_id}/respond",
+    response_model=UniversityFeedbackActionResponse,
+    summary="Submit official university response to Government feedback directive",
+)
+def respond_to_government_feedback(
+    track_id: str,
+    feedback_id: int,
+    payload: UniversityFeedbackRespondRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+) -> UniversityFeedbackActionResponse:
+    fb = db.query(GovernmentFeedback).filter(GovernmentFeedback.id == feedback_id).first()
+    if not fb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Government feedback with ID '{feedback_id}' not found.",
+        )
+
+    actor_name = current_user.full_name if current_user else "Dr. Meera Nair (Dean R&D)"
+    actor_id = current_user.id if current_user else None
+
+    fb.university_response = payload.university_response.strip()
+    fb.responded_by_name = actor_name
+    fb.responded_at = datetime.now(timezone.utc)
+    fb.status = payload.feedback_status or "Responded"
+    fb.updated_at = datetime.now(timezone.utc)
+
+    audit = AuditLog(
+        actor_user_id=actor_id,
+        actor_email=current_user.email if current_user else "dean.rnd@bitmesra.ac.in",
+        action="university_feedback_response_submitted",
+        entity_type="government_feedback",
+        entity_id=str(fb.id),
+        metadata_json=json.dumps({
+            "track_id": fb.track_id,
+            "response": payload.university_response,
+            "status": fb.status,
+        }),
+    )
+    db.add(audit)
+
+    db.commit()
+    db.refresh(fb)
+
+    rep = db.query(Report).filter(Report.id == fb.report_id).first()
+    stage = "Proposed Solution"
+    if rep and rep.ai_project_readiness_score and rep.ai_project_readiness_score >= 80:
+        stage = "Prototype / Pilot"
+
+    officer_dept_str = f"{fb.government_department} ({fb.government_officer_name})" if fb.government_officer_name else fb.government_department
+
+    item = UniversityGovernmentFeedbackItem(
+        id=fb.id,
+        report_id=fb.report_id,
+        track_id=fb.track_id,
+        problem_title=fb.problem_title,
+        government_officer_department=officer_dept_str,
+        government_officer_name=fb.government_officer_name,
+        government_department=fb.government_department,
+        feedback=fb.feedback_text,
+        requested_changes=fb.requested_changes,
+        university_response=fb.university_response,
+        responded_by_name=fb.responded_by_name,
+        responded_at=fb.responded_at,
+        feedback_status=fb.status,
+        date=fb.created_at,
+        current_project_stage=stage,
+    )
+
+    return UniversityFeedbackActionResponse(
+        status="success",
+        message=f"Official university response submitted for feedback on {fb.track_id}.",
+        track_id=fb.track_id,
+        feedback_item=item,
+    )
 
 
 @router.get(
     "/{track_id}",
     response_model=ReportResponse,
     summary="Retrieve report by Track ID",
-    description="Looks up a single report by its unique permanent Track ID (e.g. IF-JH-2026-0001).",
+    description="Looks up a single report by its unique permanent Track ID (e.g. IF-JH-2026-0001) or database integer ID.",
 )
 def get_report_by_track_id(
     track_id: str,
     db: Session = Depends(get_db),
 ) -> Report:
-    report = (
-        db.query(Report)
-        .filter(func.lower(Report.track_id) == track_id.strip().lower())
-        .first()
-    )
+    query_str = track_id.strip()
+    report = None
+    if query_str.isdigit():
+        report = db.query(Report).filter(Report.id == int(query_str)).first()
+    if not report:
+        report = (
+            db.query(Report)
+            .filter(func.lower(Report.track_id) == query_str.lower())
+            .first()
+        )
 
     if not report:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Report with Track ID '{track_id}' not found.",
+            detail=f"Report with Track ID or ID '{track_id}' not found.",
         )
 
     if not report.verification_status:
@@ -426,6 +1445,14 @@ def get_report_by_track_id(
             report.verification_status = "Verified"
         else:
             report.verification_status = "Pending Verification"
+
+    if not report.citizen_name and report.citizen_id:
+        user = db.query(User).filter(User.id == report.citizen_id).first()
+        if user and user.full_name:
+            report.citizen_name = user.full_name
+
+    if report.affected_people is None:
+        report.affected_people = 0
 
     return report
 
@@ -516,7 +1543,10 @@ def update_report_status(
             title=f"Status Updated: {report.track_id}",
             message=f"Report '{report.problem_title}' moved to '{new_status}'.",
             related_track_id=report.track_id,
+            related_entity_id=report.track_id,
+            action_url=f"/citizen/problems/{report.track_id}" if report.citizen_id else f"/government/problems/{report.track_id}/review",
             priority="Important" if new_status in ["Resolved", "Rejected"] else "Normal",
+            event_key=f"status_changed_{report.track_id}_{new_status}_{int(datetime.now(timezone.utc).timestamp())}",
         )
         db.add(notif)
 
@@ -996,7 +2026,7 @@ def get_report_similar_problems(
 def get_report_duplicate_analysis(
     track_id: str,
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> DuplicateAnalysisResponse:
     report = (
         db.query(Report)
@@ -1012,7 +2042,7 @@ def get_report_duplicate_analysis(
 
     # Authorization Check:
     # Only Government and Super Admin roles can access duplicate analysis
-    if current_user and current_user.role not in ["government", "admin"]:
+    if current_user.role not in ["government", "admin"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied. Only Government Officials and Super Admins can access official duplicate analysis.",
@@ -1040,19 +2070,19 @@ def get_report_duplicate_analysis(
                             reviewed_at=datetime.fromisoformat(r_obj["reviewed_at"]),
                         )
                     except Exception:
-                        pass
+                        rev = None
                 formatted_candidates.append(
                     DuplicateCandidate(
-                        matching_track_id=c["matching_track_id"],
+                        matching_track_id=c.get("matching_track_id") or c.get("candidate_track_id", ""),
                         similarity_score=float(c.get("similarity_score", 0.0)),
                         duplicate_classification=c.get("duplicate_classification", "possible_duplicate"),
-                        reasons=c.get("reasons", []),
-                        current_status=c.get("current_status", "Open"),
-                        current_priority=c.get("current_priority", "Medium"),
-                        district_location=c.get("district_location", ""),
-                        created_date=c.get("created_date", ""),
-                        title=c.get("title"),
-                        category=c.get("category"),
+                        reasons=c.get("reasons") or c.get("rationale") or [],
+                        current_status=c.get("current_status") or c.get("candidate_status") or "Open",
+                        current_priority=c.get("current_priority") or c.get("priority") or "Medium",
+                        district_location=c.get("district_location") or c.get("district") or "",
+                        created_date=c.get("created_date") or c.get("candidate_created_at") or "",
+                        title=c.get("title") or c.get("candidate_title"),
+                        category=c.get("category") or c.get("candidate_category"),
                         official_review=rev,
                     )
                 )
@@ -1077,7 +2107,7 @@ def review_duplicate_report(
     track_id: str,
     review_req: DuplicateReviewRequest,
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> DuplicateAnalysisResponse:
     report = (
         db.query(Report)
@@ -1093,23 +2123,11 @@ def review_duplicate_report(
 
     # Authorization Check:
     # Only Government and Super Admin roles can submit official duplicate reviews
-    if current_user and current_user.role not in ["government", "admin"]:
+    if current_user.role not in ["government", "admin"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied. Only Government Officials and Super Admins can submit duplicate review decisions.",
         )
-
-    if not current_user:
-        current_user = db.query(User).filter(User.role == "government").first()
-        if not current_user:
-            current_user = db.query(User).filter(User.role == "admin").first()
-        if not current_user:
-            current_user = User(
-                id=1,
-                email="official@jharkhand.gov.in",
-                role="government",
-                name="Government Official",
-            )
 
     return apply_official_duplicate_review(db, report, review_req, current_user)
 
@@ -1188,7 +2206,7 @@ def get_report_capabilities(
 def get_report_hei_matches(
     track_id: str,
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> HEIMatchingResponse:
     report = (
         db.query(Report)
@@ -1203,17 +2221,16 @@ def get_report_hei_matches(
         )
 
     # Authorization Check:
-    if current_user:
-        if current_user.role in ["hei", "faculty", "partner"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied. HEI, Faculty, and Partner roles cannot access HEI matching analysis.",
-            )
-        if current_user.role == "citizen" and report.citizen_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Citizens can only view HEI recommendations for their own submitted reports.",
-            )
+    if current_user.role in ["hei", "faculty", "partner"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. HEI, Faculty, and Partner roles cannot access HEI matching analysis.",
+        )
+    if current_user.role == "citizen" and report.citizen_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Citizens can only view HEI recommendations for their own submitted reports.",
+        )
 
     # If capabilities are missing, execute capability extraction
     raw_caps = report.ai_capabilities
@@ -1318,7 +2335,7 @@ def record_hei_interest(
     track_id: str,
     payload: HEIInterestCreate,
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> HEIInterestActionResponse:
     report = (
         db.query(Report)
@@ -1345,52 +2362,44 @@ def record_hei_interest(
         )
 
     # 1. Authorization & Role Verification
-    if current_user:
-        if current_user.role in ["citizen", "faculty", "partner"]:
+    if current_user.role in ["citizen", "faculty", "partner"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Citizens, Faculty, and Partners cannot record HEI recommendations or expressions of interest.",
+        )
+
+    if current_user.role == "hei":
+        user_org = (current_user.organization_name or "").strip().lower()
+        hei_name = target_hei.name.strip().lower()
+        user_email = (current_user.email or "").strip().lower()
+        hei_email = (target_hei.associated_user_email or "").strip().lower()
+
+        is_own_hei = (
+            (hei_email and user_email == hei_email)
+            or (user_org and (user_org in hei_name or hei_name in user_org))
+            or (user_email == "dean.rnd@bitmesra.ac.in" and target_hei.hei_id == "bit-mesra")
+        )
+        if not is_own_hei:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied. Citizens, Faculty, and Partners cannot record HEI recommendations or expressions of interest.",
+                detail="HEI representatives can only express interest for their own institution.",
             )
-
-        if current_user.role == "hei":
-            user_org = (current_user.organization_name or "").strip().lower()
-            hei_name = target_hei.name.strip().lower()
-            user_email = (current_user.email or "").strip().lower()
-            hei_email = (target_hei.associated_user_email or "").strip().lower()
-
-            is_own_hei = (
-                (hei_email and user_email == hei_email)
-                or (user_org and (user_org in hei_name or hei_name in user_org))
-                or (user_email == "dean.rnd@bitmesra.ac.in" and target_hei.hei_id == "bit-mesra")
-            )
-            if not is_own_hei:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="HEI representatives can only express interest for their own institution.",
-                )
-            action_type = "expression_of_interest"
-            actor_id = current_user.id
-            actor_name = current_user.full_name
-            actor_role = current_user.role
-            actor_email = current_user.email
-        elif current_user.role in ["government", "admin"]:
-            action_type = "official_recommendation"
-            actor_id = current_user.id
-            actor_name = current_user.full_name
-            actor_role = current_user.role
-            actor_email = current_user.email
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied for this action.",
-            )
-    else:
-        # Default to Government Officer for official review
+        action_type = "expression_of_interest"
+        actor_id = current_user.id
+        actor_name = current_user.full_name
+        actor_role = current_user.role
+        actor_email = current_user.email
+    elif current_user.role in ["government", "admin"]:
         action_type = "official_recommendation"
-        actor_id = None
-        actor_name = "Government Official"
-        actor_role = "government"
-        actor_email = "official@jharkhand.gov.in"
+        actor_id = current_user.id
+        actor_name = current_user.full_name
+        actor_role = current_user.role
+        actor_email = current_user.email
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied for this action.",
+        )
 
     # Enforce: Prevent sending the same recommendation twice
     existing_rec = db.query(HEIInterest).filter(

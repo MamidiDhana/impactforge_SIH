@@ -104,6 +104,8 @@ export function SubmitProblemPage() {
       address_or_landmark: values.landmark?.trim() || values.locality?.trim() || `${values.district}, Jharkhand`,
       latitude: coords ? coords.lat : null,
       longitude: coords ? coords.lng : null,
+      affected_people: typeof values.affectedPeople === 'number' ? values.affectedPeople : 0,
+      citizen_name: currentUser?.name?.trim() || null,
     }
 
     try {

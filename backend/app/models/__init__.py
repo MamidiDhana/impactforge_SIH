@@ -9,6 +9,7 @@ from app.models.faculty_student import FacultyProfile, StudentProfile, FacultyIn
 from app.models.partner import PartnerProfile, PartnerInterest
 from app.models.rematching import AIRematchingEvent
 from app.models.ai_management import AIFeedback, TrainingRecord, AIModelVersion, AIRetrainingJob
+from app.models.university_support import ProjectResourceRequest, GovernmentFeedback
 
 __all__ = [
     "Report",
@@ -30,6 +31,8 @@ __all__ = [
     "TrainingRecord",
     "AIModelVersion",
     "AIRetrainingJob",
+    "ProjectResourceRequest",
+    "GovernmentFeedback",
 ]
 
 
